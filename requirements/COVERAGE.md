@@ -6,7 +6,7 @@ Status: **Covered** = implemented and tested. **Verified manually** = exercised 
 
 | Requirement | Implementation | Tests | Status |
 |---|---|---|---|
-| State model | Engine `update_status`, `invalidate`; Blocked → Backlog | engine; review-regressions; coverage "closed rework…" | Covered |
+| State model | Engine `update_status`, `invalidate`; Blocked resumes to its prior state under that state's gates, or Backlog ends the attempt | engine; review-regressions; coverage "closed rework…", "a Blocked story resumes…" | Covered |
 | SEC 01 stdio only, owner-only files | `server/mcp.ts`; `store.ts openStore`; umask in server, CLI, hook, scripts | store "owner-only…WAL"; mcp "bundled stdio"; coverage "owner-only under a permissive umask" | Covered |
 | SEC 01 owner and scoped reporter actors | `identity.ts`; `reporter.ts deliverAsReporter`; engine reporter allowlist | workflow "scenario 9"; store "refuses owner actions" | Covered |
 | SEC 01 board manifest and redacted reads | `commands/board.md`; `views.ts` | plugin "manifest names exactly…"; views; board-page "redacted cards" | Covered; host consent behaviour Open |
@@ -63,7 +63,7 @@ End-to-end: e2e-strict "strict project goes from creation to Shipped by followin
 | 17 | migrate "import strips derived fields…", CLI round-trip |
 | 18 | workflow "scenario 18" |
 | 19 | workflow "scenario 19" |
-| 20 | workflow "scenario 20"; review-fixes "rejected result…" |
+| 20 | workflow "scenario 20"; review-fixes "rejected result…"; coverage "strict claims require a fresh session with no pending or rejected events" |
 | 21 | workflow "scenario 21" |
 | 22 | binding (normalization, worktrees) |
 

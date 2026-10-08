@@ -4099,7 +4099,7 @@ SETUP: Observe the repository identity with "sh <plugin>/bin/kanban workflow bin
 
 OWNER TOOLS: Tools described as OWNER change scope or authority (approve_scope, waive_criterion, exclude_*, approve_proposal, decide_intake, recover_claim, configure_workflow, classify_rework, resolve_rework_scope, add_binding, set_requirements). Call them only after the user has explicitly approved that decision in this conversation, and quote the approval in the reason.
 
-START/RESUME: Read get_board (or board_overview for a compact view) and workflow. Run "sh <plugin>/bin/kanban workflow observe CONFIG" to inspect actual binding, current commit, dirty state, outbox, rejected events and run logs. Recover reports with "resume CONFIG" when an active reporter attempt exists; if a prior run is still active, stop recovery. Unknown prior worker state requires verified interruption. Inspect known provider releases before redeploying. Call start_session with observed binding, commit, session ID and the actual pending count; unresolved or rejected reports and conflicts must be investigated. Do not turn a missing signal into success.
+START/RESUME: Read get_board (or board_overview for a compact view) and workflow. Run "sh <plugin>/bin/kanban workflow observe CONFIG" to inspect actual binding, current commit, dirty state, outbox, rejected events and run logs. Recover reports with "resume CONFIG" when an active reporter attempt exists; if a prior run is still active, stop recovery. Unknown prior worker state requires verified interruption. Inspect known provider releases before redeploying. Call start_session with observed binding, commit, session ID and the actual pending and rejected counts from observe; unresolved or rejected reports and conflicts must be investigated. Do not turn a missing signal into success.
 
 PLAN/CLAIM: Register the full source inventory with set_requirements, including unmapped requirements. Preview imports before writing ambiguous changes. Configure strict_checks=true; legacy evidence needs review before requalification. Each criterion needs type, expected outcome, evidence_requirement and reviewed checks: stable check ID, functional/deployed kind, exact command and named observable assertions. Review assertions for actual behavior; successful build/lint or a screenshot is not functionality. The owner approves explicit phases/environments; tracker operations do not grant new coding/deployment authority. Ready requires reviewed scope/plans/dependencies. next_story selects eligible priority work. Claim BEFORE coding, with binding, worker, branch/checkout, exact starting commit and acceptance plan. Keep the returned attempt ID and lease token for this session's tool calls only. Continue only within the approved scope.
 
@@ -4393,8 +4393,8 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   if (action === "start_session") {
     owner(actor);
     req(p.bindings.includes(a.binding), "Repository binding mismatch");
-    const thread_id = id.parse(a.thread_id), observed_commit = commit.parse(a.commit), pending_events = external_exports.number().int().min(0).parse(a.pending_events);
-    const session = { id: uid(), thread_id, binding: a.binding, commit: observed_commit, pending_events, at: now.toISOString(), actor: actor.id, unfinished_runs: p.stories.flatMap((s3) => s3.runs.filter((r) => !s3.evidence.some((e) => e.run_id === r.id)).map((r) => ({ story_id: s3.id, run_id: r.id }))), known_releases: p.stories.flatMap((s3) => s3.releases.map((r) => ({ story_id: s3.id, version: r.version, result: r.result, commit: r.commit }))) };
+    const thread_id = id.parse(a.thread_id), observed_commit = commit.parse(a.commit), pending_events = external_exports.number().int().min(0).parse(a.pending_events), rejected_events = a.rejected_events === void 0 ? void 0 : external_exports.number().int().min(0).parse(a.rejected_events);
+    const session = { id: uid(), thread_id, binding: a.binding, commit: observed_commit, pending_events, ...rejected_events === void 0 ? {} : { rejected_events }, at: now.toISOString(), actor: actor.id, unfinished_runs: p.stories.flatMap((s3) => s3.runs.filter((r) => !s3.evidence.some((e) => e.run_id === r.id)).map((r) => ({ story_id: s3.id, run_id: r.id }))), known_releases: p.stories.flatMap((s3) => s3.releases.map((r) => ({ story_id: s3.id, version: r.version, result: r.result, commit: r.commit }))) };
     p.sessions.push(session);
     if (!p.threads.some((t) => t.thread_id === thread_id)) p.threads.push({ thread_id, binding: a.binding, at: now.toISOString(), actor: actor.id });
     const reconciliation = { ...session, staleClaims: p.stories.filter((s3) => s3.claim && Date.parse(s3.claim.expires) <= now.getTime()).map((s3) => s3.id), repairs: [], conflicts: [] };
@@ -4660,7 +4660,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     owner(actor);
     req(p.bindings.includes(a.binding), "Repository binding mismatch");
     req(st.status === "Ready" && !st.claim && !st.exclusion, "Story must be Ready and unclaimed");
-    if (p.workflow.strict_checks) req(p.sessions.some((x) => x.binding === a.binding && x.commit === a.starting_commit && x.pending_events === 0 && now.getTime() - Date.parse(x.at) < 9e5), "Reconciled start/resume session required before claim");
+    if (p.workflow.strict_checks) req(p.sessions.some((x) => x.binding === a.binding && x.commit === a.starting_commit && x.pending_events === 0 && !x.rejected_events && now.getTime() - Date.parse(x.at) < 9e5), "Reconciled start/resume session required before claim (fresh, same commit, no pending or unresolved rejected events)");
     phaseAllowed(p, st);
     req(st.dependencies.every((d) => p.stories.some((s3) => s3.id === d && s3.status === "Shipped" && eligibility(p, s3).deployed)), "Dependencies unfinished");
     const worker = str.parse(a.worker), branch = str.parse(a.branch), starting = commit.parse(a.starting_commit), plan2 = str.parse(a.plan);
@@ -4841,7 +4841,8 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       return save(st, st, { status: target });
     }
     req(!st.proposal_pending, "Proposal must be approved before execution");
-    const transitions = { Draft: ["Backlog"], Backlog: ["Ready"], Implementing: ["Verifying"], Verifying: ["Implementing", "Ready to ship"], "Ready to ship": ["Implementing", "Shipped"], "Needs rework": ["Backlog"], Blocked: ["Backlog"] };
+    const resumable = ["Ready", "Implementing", "Verifying", "Ready to ship", "Shipped"].includes(st.blocked?.previous) ? [st.blocked.previous] : [];
+    const transitions = { Draft: ["Backlog"], Backlog: ["Ready"], Implementing: ["Verifying"], Verifying: ["Implementing", "Ready to ship"], "Ready to ship": ["Implementing", "Shipped"], "Needs rework": ["Backlog"], Blocked: ["Backlog", ...resumable] };
     req(transitions[st.status]?.includes(target), "Invalid transition; claim Ready stories before coding");
     if (target === "Backlog")
       endAttempt("backlog");
@@ -4875,6 +4876,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
         }
       endAttempt("shipped");
     }
+    if (st.status === "Blocked") st.blocked = { ...st.blocked, resolved_at: now.toISOString(), resolved_to: target };
     st.status = target;
     st.blocker = void 0;
     return save(st, st, { status: target, commit: st.commit });
@@ -4932,7 +4934,7 @@ var specs = {
   import_source_bundle: { description: "OWNER: atomically import a reviewed full OpenSpec inventory and versioned scenario/task/change mappings; unknown/unverified format denied.", fields: { project_id: s, event_id: s, reason: s, bundle: { type: "object", additionalProperties: true } }, required: ["project_id", "event_id", "reason", "bundle"] },
   add_binding: { description: "OWNER: bind an additional exact repository to the same project; collision-safe.", fields: { project_id: s, event_id: s, binding: s, reason: s }, required: ["project_id", "event_id", "binding", "reason"] },
   associate_thread: { description: "OWNER: associate a known thread or clearly labeled workspace session with shared project.", fields: { project_id: s, event_id: s, binding: s, thread_id: s, reason: s }, required: ["project_id", "event_id", "binding", "thread_id"] },
-  start_session: { description: "Start/resume checkpoint from actual checkout/outbox observations; returns unfinished runs, known releases and eligible work. Never guess pending count.", fields: { project_id: s, event_id: s, binding: s, thread_id: s, commit: s, pending_events: i }, required: ["project_id", "event_id", "binding", "thread_id", "commit", "pending_events"] },
+  start_session: { description: "Start/resume checkpoint from actual checkout/outbox observations (kanban workflow observe); returns unfinished runs, known releases and eligible work. Never guess pending or rejected counts; strict claims need both to be zero.", fields: { project_id: s, event_id: s, binding: s, thread_id: s, commit: s, pending_events: i, rejected_events: i }, required: ["project_id", "event_id", "binding", "thread_id", "commit", "pending_events"] },
   configure_workflow: { description: "OWNER: require reviewed criterion assertions and workflow checkpoints; legacy records remain available but need current proof.", fields: { project_id: s, event_id: s, strict_checks: bool, reason: s }, required: ["project_id", "event_id", "strict_checks", "reason"] },
   propose_intake: { description: "Preserve original informal request and goal; proposed stories remain Draft outside execution and approved-scope denominators.", fields: { project_id: s, event_id: s, request: s, goal: s, source_revision: s, stories: array(story) }, required: ["project_id", "event_id", "request", "goal", "stories"] },
   decide_intake: { description: "OWNER: record reviewed approval/rejection/clarification. Respect authorization already supplied; no repeat approval for unchanged scope.", fields: { project_id: s, event_id: s, intake_id: s, decision: { enum: ["approved", "rejected", "needs_clarification"] }, reason: s }, required: ["project_id", "event_id", "intake_id", "decision", "reason"] },

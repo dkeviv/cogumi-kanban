@@ -25,7 +25,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 ## 2. Start or resume a session
 
 1. If a reporter config exists for an active attempt: `kanban workflow observe CONFIG`, then `kanban workflow resume CONFIG`. Stop if it reports a prior worker still active. Exit code 3 means rejected events: their runs were recorded as blocked; read the reasons before continuing.
-2. `start_session` with `thread_id` = the Claude session ID from the hook, the observed `binding`, `commit` (`git rev-parse HEAD`) and the actual `pending_events` count from `observe` (0 only after checking). Investigate rejected events before claiming.
+2. `start_session` with `thread_id` = the Claude session ID from the hook, the observed `binding`, `commit` (`git rev-parse HEAD`), and the actual `pending_events` and `rejected_events` counts from `kanban workflow observe` (0 only after checking). Strict claims are refused while either is above zero; resolve rejected events first.
 
 ## 3. Plan
 
@@ -81,6 +81,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 
 ## Rework, recovery, finish
 
+- Blocked: `update_status` Blocked with `reason`, `next_action` and `dependency`. When the blocker clears, move it back to the exact state it interrupted (with the lease if that state needs one); moving it to Backlog ends the attempt instead.
 - `request_rework` (observed/expected/reproduction/classification). Reproduce first with a failing run or `record_reproduction`; old passes never close it.
 - Rejected events: a rejected result is recorded as a blocked run; `before-close` files away rejections nothing waits on and exits 3 only for unresolved ones. Fix the cause and `kanban report requeue EVENT_ID`, or, only with the owner's explicit approval, `kanban report discard EVENT_ID --reason "..."`.
 - Stale claim: `reconcile` with observed commit and `pending_events: 0` (verified), then the owner's `recover_claim`.

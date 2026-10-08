@@ -40,7 +40,7 @@ export async function sessionContext(input: { session_id?: string; cwd?: string 
             `Claude session ID for thread_id: ${input.session_id || 'unavailable (use a labeled workspace session identifier)'}.`,
             `Plugin directory (<plugin> in the cogumi-workflow skill): ${pluginRoot}. Scripts: sh "${path.join(pluginRoot, 'bin', 'kanban')}" workflow binding|observe|resume|test|release|before-close CONFIG.`,
             `Outbox for this project: ${pending} pending, ${rejected} rejected event(s)${rejected ? ' — investigate rejected events before claiming work' : ''}.`,
-            'Before coding: follow the cogumi-workflow skill — read board_overview, observe/resume, call start_session with the observed commit and pending count, and claim the story before editing code.',
+            'Before coding: follow the cogumi-workflow skill — read board_overview, observe/resume, call start_session with the observed commit and the pending and rejected counts, and claim the story before editing code.',
         ].join('\n');
     } finally {
         service.close();

@@ -49,7 +49,7 @@ Ranking note: Project binding, intake and coverage in Epic 9 are foundational an
 
 ## State model
 
-Normal flow: Draft → Backlog → Ready → Implementing → Verifying → Ready to ship → Shipped. Draft holds unclear or unreviewed requests. Blocked records a reason, the prior state, the next action and the responsible dependency; work resumes from Blocked through Backlog → Ready and a fresh claim, so the previous attempt is ended explicitly rather than silently continued. Needs rework withdraws current completion eligibility after a human reports incomplete behavior. Proof that stops qualifying (a failed check, a source change, rework) demotes Ready to ship to Verifying and Shipped to Needs rework; a worker may also move Verifying back to Implementing. Historical releases remain preserved.
+Normal flow: Draft → Backlog → Ready → Implementing → Verifying → Ready to ship → Shipped. Draft holds unclear or unreviewed requests. Blocked records a reason, the prior state, the next action and the responsible dependency, and keeps the current attempt; when the blocker clears the story resumes to exactly the state it interrupted, subject to that state's own gates (an active lease, qualifying proof), or the owner moves it to Backlog to end the attempt. Needs rework withdraws current completion eligibility after a human reports incomplete behavior. Proof that stops qualifying (a failed check, a source change, rework) demotes Ready to ship to Verifying and Shipped to Needs rework; a worker may also move Verifying back to Implementing. Historical releases remain preserved.
 
 | State | Entry requirement |
 |---|---|
@@ -348,7 +348,7 @@ Git contains product code and approved executable acceptance definitions. The tr
 17. Import a ChatGPT-edition board export; counts and IDs match, claims are expired, derived fields are absent, and a second import of the same export is a no-op reporting zero changes.
 18. Running the reporter wrapper leaves the product checkout's Git status and Git configuration unchanged.
 19. A check whose output contains keys such as `max_tokens` or text such as `Bearer abc` is checkpointed and recorded successfully, with credential-looking values redacted.
-20. A permanently rejected outbox event is moved to the rejected area with its reason, later events are still delivered, the affected run is recorded as blocked, and `observe`, the SessionStart hook and the checkpoint's delivery error surface the rejected events (start_session itself records only the pending count).
+20. A permanently rejected outbox event is moved to the rejected area with its reason, later events are still delivered, the affected run is recorded as blocked, `observe`, the SessionStart hook and the checkpoint's delivery error surface the rejected events, and start_session records the observed rejected count so a strict claim is refused while it is above zero.
 21. A heartbeat failure during a running check is recorded as a warning and the check runs to completion.
 22. Two worktrees of the same repository, and SSH versus HTTPS clones of the same origin, resolve to the same project.
 

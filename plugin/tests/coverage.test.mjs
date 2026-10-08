@@ -178,3 +178,39 @@ test('launcher discovers an nvm install when PATH has no node (PLG 01)', async (
         assert.match(viaWrapper.stderr, /workflow\|report\|cli\|openspec/);
     } finally { await fs.rm(home, { recursive: true, force: true }); }
 });
+
+test('a Blocked story resumes to the state it interrupted, under that state\'s gates (state model)', () => {
+    const f = fixture();
+    f.start(); // Verifying with an active lease
+    const lease = { worker: 'worker', attempt_id: f.claim.attempt_id, lease_token: f.claim.token };
+    f.go('update_status', { status: 'Blocked', reason: 'Waiting for API key from vendor', next_action: 'Owner provides key', dependency: 'vendor' });
+    assert.equal(f.s.status, 'Blocked');
+    assert.throws(() => f.go('update_status', { status: 'Ready to ship', ...lease }), /Invalid transition/);
+    assert.throws(() => f.go('update_status', { status: 'Verifying', worker: 'worker', attempt_id: f.claim.attempt_id, lease_token: 'wrong' }), /lease/i);
+    f.go('update_status', { status: 'Verifying', ...lease });
+    assert.equal(f.s.status, 'Verifying');
+    assert.equal(f.s.blocked.resolved_to, 'Verifying');
+    assert.equal(f.s.claim.attempt_id, lease.attempt_id, 'the same attempt continues');
+    // Backlog remains the way to end the attempt instead.
+    f.go('update_status', { status: 'Blocked', reason: 'Vendor gone' });
+    f.go('update_status', { status: 'Backlog' });
+    assert.equal(f.s.claim, undefined);
+});
+
+test('strict claims require a fresh session with no pending or rejected events (scenario 20)', async () => {
+    const { KanbanService } = await import('../src/server/service.ts');
+    const k = new KanbanService(':memory:');
+    const p = await k.call('create_project', { name: 'Strict', binding: 'https://e.test/strict', event_id: 'c' });
+    const go = (action, args = {}) => k.call(action, { project_id: p.id, story_id: 'S1', binding: p.binding, event_id: crypto.randomUUID(), ...args });
+    const checks = [{ id: 'f', kind: 'functional', command: 'node t', assertions: ['a'] }, { id: 'd', kind: 'deployed', command: 'node t', assertions: ['a'] }];
+    await go('import_stories', { source: 'P', source_revision: '1', stories: [{ id: 'S1', epic: 'E', title: 't', criteria: ['x'], proof_plan: [{ type: 'api', expected: 'x', evidence_requirement: 'assertions', checks }] }] });
+    await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'ok' });
+    await go('update_status', { status: 'Backlog' });
+    await go('update_status', { status: 'Ready', reason: 'reviewed' });
+    await go('start_session', { thread_id: 'claude-1', commit: A, pending_events: 0, rejected_events: 2 });
+    await assert.rejects(go('claim_story', { worker: 'w', branch: 'b', starting_commit: A, plan: 'p' }), /no pending or unresolved rejected events/);
+    await go('start_session', { thread_id: 'claude-1', commit: A, pending_events: 0, rejected_events: 0 });
+    await go('claim_story', { worker: 'w', branch: 'b', starting_commit: A, plan: 'p' });
+    assert.equal((await go('get_board')).stories[0].status, 'Implementing');
+    k.close();
+});

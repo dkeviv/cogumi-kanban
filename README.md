@@ -21,7 +21,7 @@ It is the Claude edition of Cogumi Kanban (originally a ChatGPT Sites plugin). T
 | `plugin/scripts/` | Reporter scripts: durable outbox, checkpoints, test wrapper, workflow helper, OpenSpec import |
 | `plugin/board/kanban-board.html` | The Kanban board page (Artifact and snapshot) |
 | `plugin/skills/`, `plugin/commands/`, `plugin/hooks/` | Workflow skill, slash commands, hook registration |
-| `plugin/tests/` | 148 tests: the original engine suites plus local storage, MCP, reporter scripts, import, board views, the board page (jsdom), hook, snapshot and packaging |
+| `plugin/tests/` | 150 tests: the original engine suites plus local storage, MCP, reporter scripts, import, board views, the board page (jsdom), hook, snapshot and packaging |
 
 ## Requirements
 

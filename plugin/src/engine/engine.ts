@@ -234,8 +234,8 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         return save(p.threads.find((x:any)=>x.thread_id===thread_id));
     }
     if(action==='start_session') {
-        owner(actor);req(p.bindings.includes(a.binding),'Repository binding mismatch');const thread_id=id.parse(a.thread_id),observed_commit=commit.parse(a.commit),pending_events=z.number().int().min(0).parse(a.pending_events);
-        const session={id:uid(),thread_id,binding:a.binding,commit:observed_commit,pending_events,at:now.toISOString(),actor:actor.id,unfinished_runs:p.stories.flatMap((s:Story)=>s.runs.filter((r:any)=>!s.evidence.some((e:any)=>e.run_id===r.id)).map((r:any)=>({story_id:s.id,run_id:r.id}))),known_releases:p.stories.flatMap((s:Story)=>s.releases.map((r:any)=>({story_id:s.id,version:r.version,result:r.result,commit:r.commit})))};
+        owner(actor);req(p.bindings.includes(a.binding),'Repository binding mismatch');const thread_id=id.parse(a.thread_id),observed_commit=commit.parse(a.commit),pending_events=z.number().int().min(0).parse(a.pending_events),rejected_events=a.rejected_events===undefined?undefined:z.number().int().min(0).parse(a.rejected_events);
+        const session={id:uid(),thread_id,binding:a.binding,commit:observed_commit,pending_events,...(rejected_events===undefined?{}:{rejected_events}),at:now.toISOString(),actor:actor.id,unfinished_runs:p.stories.flatMap((s:Story)=>s.runs.filter((r:any)=>!s.evidence.some((e:any)=>e.run_id===r.id)).map((r:any)=>({story_id:s.id,run_id:r.id}))),known_releases:p.stories.flatMap((s:Story)=>s.releases.map((r:any)=>({story_id:s.id,version:r.version,result:r.result,commit:r.commit})))};
         p.sessions.push(session);if(!p.threads.some((t:any)=>t.thread_id===thread_id))p.threads.push({thread_id,binding:a.binding,at:now.toISOString(),actor:actor.id});
         const reconciliation={...session,staleClaims:p.stories.filter((s:Story)=>s.claim&&Date.parse(s.claim.expires)<=now.getTime()).map((s:Story)=>s.id),repairs:[],conflicts:[]};p.reconciliations.push(reconciliation);
         return save({...session,summary:summary(p),next_story:pending_events===0?dispatch(board,'next_story',{project_id:p.id},now,actor):null});
@@ -459,7 +459,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         owner(actor);
         req(p.bindings.includes(a.binding), 'Repository binding mismatch');
         req(st.status === 'Ready' && !st.claim && !st.exclusion, 'Story must be Ready and unclaimed');
-        if(p.workflow.strict_checks)req(p.sessions.some((x:any)=>x.binding===a.binding&&x.commit===a.starting_commit&&x.pending_events===0&&now.getTime()-Date.parse(x.at)<900000),'Reconciled start/resume session required before claim');
+        if(p.workflow.strict_checks)req(p.sessions.some((x:any)=>x.binding===a.binding&&x.commit===a.starting_commit&&x.pending_events===0&&!x.rejected_events&&now.getTime()-Date.parse(x.at)<900000),'Reconciled start/resume session required before claim (fresh, same commit, no pending or unresolved rejected events)');
         phaseAllowed(p, st);
         req(st.dependencies.every((d: string) => p.stories.some((s: Story) => s.id === d && s.status === 'Shipped' && eligibility(p, s).deployed)), 'Dependencies unfinished');
         const worker = str.parse(a.worker), branch = str.parse(a.branch), starting = commit.parse(a.starting_commit), plan = str.parse(a.plan);
@@ -611,7 +611,10 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
             return save(st, st, { status: target });
         }
         req(!st.proposal_pending,'Proposal must be approved before execution');
-        const transitions: Record<string, string[]> = { Draft: ['Backlog'], Backlog: ['Ready'], Implementing: ['Verifying'], Verifying: ['Implementing', 'Ready to ship'], 'Ready to ship': ['Implementing', 'Shipped'], 'Needs rework': ['Backlog'], Blocked: ['Backlog'] };
+        // Blocked resumes to the exact state it interrupted (the gates of that state still
+        // apply: lease, proof, release), or goes back to Backlog to end the attempt.
+        const resumable = ['Ready', 'Implementing', 'Verifying', 'Ready to ship', 'Shipped'].includes(st.blocked?.previous) ? [st.blocked.previous] : [];
+        const transitions: Record<string, string[]> = { Draft: ['Backlog'], Backlog: ['Ready'], Implementing: ['Verifying'], Verifying: ['Implementing', 'Ready to ship'], 'Ready to ship': ['Implementing', 'Shipped'], 'Needs rework': ['Backlog'], Blocked: ['Backlog', ...resumable] };
         req(transitions[st.status]?.includes(target), 'Invalid transition; claim Ready stories before coding');
         if (target === 'Backlog')
             endAttempt('backlog');
@@ -644,6 +647,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
                 }
             endAttempt('shipped');
         }
+        if (st.status === 'Blocked') st.blocked = { ...st.blocked, resolved_at: now.toISOString(), resolved_to: target };
         st.status = target;
         st.blocker = undefined;
         return save(st, st, { status: target, commit: st.commit });
