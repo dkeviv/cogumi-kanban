@@ -13,7 +13,7 @@ import { A } from './helpers.mjs';
 // as the ChatGPT edition's get_board would return it (same engine, Site binding).
 async function chatgptExport() {
     const source = new KanbanService(':memory:');
-    const p = await source.call('create_project', { strict_checks: false, name: 'Abovely', binding: 'site:appgprj_123', event_id: 'c' });
+    const p = await source.call('create_project', { strict_checks: false, name: 'Legacy Project', binding: 'site:appgprj_123', event_id: 'c' });
     const go = (action, args = {}) => source.call(action, { project_id: p.id, binding: p.binding, story_id: 'S1', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { stories: [{ id: 'S1', title: 'One', epic: 'E', criteria: ['a'], proof_plan: [{ type: 'logic', expected: 'a' }] }, { id: 'S2', title: 'Two', epic: 'E', criteria: ['b'], proof_plan: [{ type: 'logic', expected: 'b' }] }] });
     await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'ok' });
@@ -62,8 +62,8 @@ test('the old lease token cannot drive work after import; the owner must reconci
     await importBoard(service, exported);
     const s = (await service.call('get_board', { project_id: projectId })).stories[0];
     await assert.rejects(service.call('set_commit', { project_id: projectId, story_id: 'S1', event_id: 'e1', worker: 'codex', attempt_id: s.attempt_id, lease_token: token, commit: A }));
-    await service.call('add_binding', { project_id: projectId, event_id: 'b1', binding: 'https://github.com/cogumi/abovely', reason: 'owner confirmed' });
-    assert.equal((await service.call('resolve_project', { binding: 'https://github.com/cogumi/abovely' })).id, projectId);
+    await service.call('add_binding', { project_id: projectId, event_id: 'b1', binding: 'https://github.com/example/legacy-project', reason: 'owner confirmed' });
+    assert.equal((await service.call('resolve_project', { binding: 'https://github.com/example/legacy-project' })).id, projectId);
     service.close();
 });
 

@@ -3,7 +3,7 @@
 Version 2.1 | October 7 2026 | Owner Vivek | Aligned with the Claude local-database plan; updated after code and coverage reviews
 Derived from: Cogumi Kanban PRD v1.1 (ChatGPT Sites edition), source commit 7f33b02
 
-Cogumi Claude Kanban is a private visual development tracker that ships as a Claude Code plugin. Claude Code updates it while implementing, testing and releasing approved work. All records live in a local SQLite database on the owner's machine; the Kanban board is a Claude Artifact that reads the plugin's local MCP server live. It starts with Abovely and supports other projects through a reusable project model. This PRD describes the intended product, functional acceptance criteria and verified evidence requirements; it does not initiate development or an autonomous worker.
+Cogumi Claude Kanban is a private visual development tracker that ships as a Claude Code plugin. Claude Code updates it while implementing, testing and releasing approved work. All records live in a local SQLite database on the owner's machine; the Kanban board is a Claude Artifact that reads the plugin's local MCP server live. It tracks any number of projects through a reusable project model. This PRD describes the intended product, functional acceptance criteria and verified evidence requirements; it does not initiate development or an autonomous worker.
 
 ## Goal and promise
 
@@ -15,7 +15,7 @@ The tracker does not guarantee bug free software or uninterrupted execution. It 
 
 ## Users and scope
 
-Owner: Vivek, the local machine user, viewing progress and approving scope in chat or on the board. Worker: an active Claude Code session that selects and implements work. Reporter: local test or deployment scripts that submit objective results. Initial project: Abovely personal MVP (sample data, not hardcoded behavior).
+Owner: Vivek, the local machine user, viewing progress and approving scope in chat or on the board. Worker: an active Claude Code session that selects and implements work. Reporter: local test or deployment scripts that submit objective results. Projects are whatever the owner creates or imports; nothing about a particular project is built into the product.
 
 Included: Claude Code plugin installable from a plugin marketplace; local stdio MCP server; local SQLite records; Kanban board as a Claude Artifact using the local MCP server; static board snapshot fallback; plugin skill, slash commands and a SessionStart hook carrying the workflow instructions; evidence references; project and phase scoping; dependencies; guarded status transitions; durable reporting retries and resume reconciliation; shared project state across Claude sessions; informal intake; optional OpenSpec mapping; requirement coverage; human requested rework; import of a board exported from the ChatGPT edition. Claude Code (optionally with Superpowers skills) executes development; the tracker coordinates and records it.
 
@@ -25,7 +25,7 @@ Excluded initially: billing, a commercial project management suite, automatic ou
 
 | Stage | Delivery |
 |---|---|
-| MVP | One owner on one machine, multiple project capable schema, Abovely sample import, Artifact board plus snapshot fallback, MCP workflow, script reporting, evidence gates, local retry queue, resume recovery, plugin packaging and ChatGPT-edition board import. |
+| MVP | One owner on one machine, multiple project capable schema, a neutral sample backlog for trying the workflow, Artifact board plus snapshot fallback, MCP workflow, script reporting, evidence gates, local retry queue, resume recovery, plugin packaging and ChatGPT-edition board import. |
 | Next | Periodic stale work detection (Claude scheduled tasks), CI integration and additional projects; optional shared hosted backend (for example Cloudflare Workers + D1 with standards-based MCP OAuth) behind the existing storage and identity adapters, enabling multiple machines and collaborators with explicit authorization. |
 | Later conditional | Automatic worker dispatch or restart only when execution capability and authorization are verified. |
 
@@ -95,7 +95,7 @@ As the owner, I want the PRD converted into an actionable backlog.
 
 - Import epics and phase specific stories with stable IDs, priority, scope, dependencies and acceptance criteria. Show a preview before committing an ambiguous import.
 - Repeat imports update matched records without duplicates; changed criteria create a new revision rather than invalidating history silently.
-- Abovely is initial sample data, not hardcoded product behavior. Keep an approved scope reference and source document version.
+- No project is built in; the plugin ships only a neutral sample backlog (`plugin/samples/sample-backlog.json`) for trying the workflow. Keep an approved scope reference and source document version.
 
 ### BKL 02 Map criteria to verification
 
@@ -329,7 +329,7 @@ Git contains product code and approved executable acceptance definitions. The tr
 
 ## Acceptance scenarios for the tracker
 
-1. Import the same Abovely backlog twice without duplicate stories; preserve IDs and history.
+1. Import the same backlog twice without duplicate stories; preserve IDs and history.
 2. Two simultaneous claims result in one winner and a clear conflict for the other, including two separate processes on the same database file.
 3. A failed functional check cannot produce Ready to ship; a missing deployed check cannot produce Shipped.
 4. Change code after passing tests and verify the old evidence no longer qualifies.
@@ -354,7 +354,7 @@ Git contains product code and approved executable acceptance definitions. The tr
 
 ## Success measures
 
-Measure accepted criteria with qualifying evidence, shipped records linked to verified releases, prevented invalid transitions, duplicate event count, unresolved stale work, reporting recovery time and manual owner correction frequency. Establish baselines during the first Abovely epic; do not claim zero bugs from green checks.
+Measure accepted criteria with qualifying evidence, shipped records linked to verified releases, prevented invalid transitions, duplicate event count, unresolved stale work, reporting recovery time and manual owner correction frequency. Establish baselines during the first tracked epic; do not claim zero bugs from green checks.
 
 ## Dependencies and open decisions
 

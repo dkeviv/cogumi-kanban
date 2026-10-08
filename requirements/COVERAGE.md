@@ -12,7 +12,7 @@ Status: **Covered** = implemented and tested. **Verified manually** = exercised 
 | SEC 01 board manifest and redacted reads | `commands/board.md`; `views.ts` | plugin "manifest names exactly…"; views; board-page "redacted cards" | Covered; host consent behaviour Open |
 | SEC 01 credential handling | `checkpoints.ts` key/value patterns; `service.call` redacts writes; views redact reads; scripts redact at enqueue | workflow "scenario 19"; review-fixes "credentials … redacted" | Covered |
 | DAT 01 data root, SQLite, CAS retry, WAL, audit, adapters | `store.ts`, `service.ts`, `persistence.ts`, `identity.ts` | store (two-service and three-process claim races, schema guard, legacy migration) | Covered |
-| BKL 01 import with preview, reimport, revisions | Engine `preview_import`, `import_stories` | coverage "preview_import writes nothing"; source-coverage "Abovely seed repeats" | Covered |
+| BKL 01 import with preview, reimport, revisions | Engine `preview_import`, `import_stories` | coverage "preview_import writes nothing"; source-coverage "full sample backlog repeats" | Covered |
 | BKL 02 proof plans, waivers, Ready gate, cycles | Engine proof schema, `waive_criterion`, dependency graph | review-regressions; engine "dependency gate" | Covered |
 | UI 01 live board, refresh, stale and disconnected states, filters | `board/kanban-board.html` (watchTool, retract, Refresh) | board-page "live board…", "disconnects retract…", "outside Claude"; views denominators | Covered (jsdom with stubbed capability); live host bridge Open |
 | UI 01 snapshot fallback | `snapshot.ts`, `cli snapshot` | hook-snapshot (2); board-page "snapshot mode" | Covered |
@@ -44,7 +44,7 @@ End-to-end: e2e-strict "strict project goes from creation to Shipped by followin
 
 | # | Tests |
 |---|---|
-| 1 | source-coverage "Abovely seed repeats"; review-regressions B12 |
+| 1 | source-coverage "full sample backlog repeats"; review-regressions B12 |
 | 2 | store "two services…", "two separate processes…" |
 | 3 | engine "missing partial mocked…", "shipping requires…" |
 | 4 | engine "changed source invalidates…" |

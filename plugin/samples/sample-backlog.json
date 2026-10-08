@@ -1,0 +1,112 @@
+[
+ {
+  "id": "ACC-01",
+  "title": "Sign up with email",
+  "epic": "Accounts",
+  "phase": "MVP",
+  "priority": 10,
+  "criteria": [
+   "A visitor can create an account with email and password",
+   "A duplicate email is refused with a clear message"
+  ]
+ },
+ {
+  "id": "ACC-02",
+  "title": "Sign in and sign out",
+  "epic": "Accounts",
+  "phase": "MVP",
+  "priority": 20,
+  "criteria": [
+   "A registered user can sign in and stays signed in across reloads",
+   "Signing out ends the session on this device"
+  ]
+ },
+ {
+  "id": "ACC-03",
+  "title": "Reset a forgotten password",
+  "epic": "Accounts",
+  "phase": "Phase 2",
+  "priority": 60,
+  "criteria": [
+   "A reset link is sent to the registered email",
+   "The link expires after one use"
+  ]
+ },
+ {
+  "id": "NTE-01",
+  "title": "Create a note",
+  "epic": "Notes",
+  "phase": "MVP",
+  "priority": 10,
+  "criteria": [
+   "A signed-in user can create a note with a title and body",
+   "The note is saved and appears at the top of their list"
+  ]
+ },
+ {
+  "id": "NTE-02",
+  "title": "Edit and delete a note",
+  "epic": "Notes",
+  "phase": "MVP",
+  "priority": 20,
+  "criteria": [
+   "Edits are saved without losing earlier content",
+   "Deleting a note asks for confirmation and removes it from the list"
+  ]
+ },
+ {
+  "id": "NTE-03",
+  "title": "Search notes",
+  "epic": "Notes",
+  "phase": "MVP",
+  "priority": 30,
+  "criteria": [
+   "Search matches words in titles and bodies",
+   "Results update as the user types"
+  ]
+ },
+ {
+  "id": "NTE-04",
+  "title": "Tag notes",
+  "epic": "Notes",
+  "phase": "Phase 2",
+  "priority": 50,
+  "criteria": [
+   "A note can carry several tags",
+   "The list can be filtered by tag"
+  ]
+ },
+ {
+  "id": "SHR-01",
+  "title": "Share a note by link",
+  "epic": "Sharing",
+  "phase": "Phase 2",
+  "priority": 40,
+  "criteria": [
+   "The owner can create a read-only link to a note",
+   "Revoking the link makes it stop working"
+  ]
+ },
+ {
+  "id": "SHR-02",
+  "title": "Invite a collaborator",
+  "epic": "Sharing",
+  "phase": "Phase 3",
+  "priority": 70,
+  "criteria": [
+   "The owner can invite another user by email to edit a note",
+   "The collaborator's edits are visible to the owner"
+  ]
+ },
+ {
+  "id": "ADM-01",
+  "title": "Export all notes",
+  "epic": "Account data",
+  "phase": "MVP",
+  "priority": 40,
+  "criteria": [
+   "A user can download all their notes as a single file",
+   "The export includes titles, bodies, tags and dates"
+  ]
+ }
+]
