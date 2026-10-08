@@ -214,3 +214,20 @@ test('strict claims require a fresh session with no pending or rejected events (
     assert.equal((await go('get_board')).stories[0].status, 'Implementing');
     k.close();
 });
+
+test('deferring a story records rationale and the revised phase scope, required on strict projects (COV 01)', async () => {
+    const { KanbanService } = await import('../src/server/service.ts');
+    const k = new KanbanService(':memory:');
+    const p = await k.call('create_project', { name: 'Strict', binding: 'https://e.test/defer', event_id: 'c' });
+    const go = (action, args = {}) => k.call(action, { project_id: p.id, story_id: 'S1', event_id: crypto.randomUUID(), ...args });
+    await go('import_stories', { source: 'P', source_revision: '1', stories: [{ id: 'S1', epic: 'E', title: 't', criteria: ['x'] }] });
+    await go('set_requirements', { source: 'P', source_revision: '1', requirements: [{ id: 'R1', epic: 'E', phase: 'MVP', stories: ['S1'] }] });
+    await assert.rejects(go('exclude_story', { reason: 'Owner: not needed for launch' }), /deferred_to/);
+    await go('exclude_story', { reason: 'Owner: not needed for launch', deferred_to: 'Phase 2' });
+    const ov = await k.call('board_overview', { project_id: p.id });
+    const excluded = ov.summary.epics[0].excluded.find(x => x.id === 'S1');
+    assert.equal(excluded.deferred_to, 'Phase 2');
+    assert.equal(excluded.from_phase, 'MVP');
+    assert.equal(excluded.reason, 'Owner: not needed for launch');
+    k.close();
+});

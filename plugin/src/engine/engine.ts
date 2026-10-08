@@ -449,7 +449,11 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
     if (action === 'exclude_story') {
         owner(actor);
         str.parse(a.reason);
-        st.exclusion = { reason: a.reason, actor: actor.id, at: now.toISOString() };
+        // PRD COV 01: deferring a required story states the revised phase scope (the phase
+        // it moves to, or "removed"); required on strict projects.
+        const deferred_to = a.deferred_to === undefined ? undefined : str.parse(a.deferred_to);
+        if (p.workflow?.strict_checks) req(deferred_to, 'deferred_to (the phase the story moves to, or "removed") is required');
+        st.exclusion = { reason: a.reason, actor: actor.id, at: now.toISOString(), from_phase: st.phase, ...(deferred_to ? { deferred_to } : {}) };
         endAttempt('deferred');
         st.generation++;
         st.status = 'Draft';

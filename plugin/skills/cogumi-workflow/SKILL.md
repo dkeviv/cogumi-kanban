@@ -32,6 +32,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 - PRD or backlog: `preview_import`, show the preview, then `import_stories` with stable IDs, phases, priorities, dependencies, criteria and a `proof_plan` per criterion (type, expected, evidence_requirement, checks with id/kind/command/assertions). Then `set_requirements` with the **full** requirement inventory, including unmapped items. Pass the **same `source` and `source_revision`** to both calls; a different or missing revision marks every mapped story for source review and Ready is refused until the owner revises it.
 - With strict checks (the default) each check's `command` must equal the reporter config's `command` joined with single spaces, exactly, and every criterion needs both a `functional` and a `deployed` check.
 - Informal request: `propose_intake` (stories stay Draft), show it, and record the user's decision with `decide_intake`.
+- Deferring or removing a story is an OWNER decision: `exclude_story` with `reason` and `deferred_to` (target phase or `removed`).
 - Owner approves phases and environments with `approve_scope`. Move stories Draft → Backlog → Ready with `update_status` (Ready needs a `reason`; tool errors name any missing field).
 
 ## 4. Claim and implement

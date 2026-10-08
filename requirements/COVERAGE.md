@@ -29,7 +29,7 @@ Status: **Covered** = implemented and tested. **Verified manually** = exercised 
 | REC 02 periodic detection | Not implemented | — | Next stage by PRD |
 | PRJ 01 binding, worktrees, sessions | `binding.ts`; engine `resolve_project`, `add_binding`, `associate_thread`; hook | binding (normalization, worktrees); review-fixes edge cases; completeness | Covered |
 | INT 01 informal intake | Engine `propose_intake`, `decide_intake` | completeness; bug-fixes | Covered |
-| COV 01 coverage, exclusions, display | Engine `set_requirements`, `exclude_requirement`, `exclude_story` (reason required; revised phase scope recorded with `approve_scope`, per PRD v2.1); `views.ts coverage`; board list | coverage "excluded requirement…"; source-coverage | Covered |
+| COV 01 coverage, exclusions, display | Engine `set_requirements`, `exclude_requirement`, `exclude_story` (reason, from_phase and `deferred_to` revised phase scope, required on strict projects); `views.ts coverage`; board list | coverage "excluded requirement…", "deferring a story records … revised phase scope"; source-coverage | Covered |
 | EPC 01 phase completion | Engine `summary` | source-coverage; views; review-regressions | Covered |
 | OSP 01 OpenSpec | `scripts/openspec-*.mjs` (`kanban openspec`); engine `import_source_bundle` | source-import; source-coverage | Covered |
 | REW 01 rework from board or chat | Engine `request_rework`, `classify_rework`; board form | views "scenario 15"; coverage "closed rework…"; board-page "rework from the board" | Covered |

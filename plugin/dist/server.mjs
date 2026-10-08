@@ -4651,7 +4651,9 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   if (action === "exclude_story") {
     owner(actor);
     str.parse(a.reason);
-    st.exclusion = { reason: a.reason, actor: actor.id, at: now.toISOString() };
+    const deferred_to = a.deferred_to === void 0 ? void 0 : str.parse(a.deferred_to);
+    if (p.workflow?.strict_checks) req(deferred_to, 'deferred_to (the phase the story moves to, or "removed") is required');
+    st.exclusion = { reason: a.reason, actor: actor.id, at: now.toISOString(), from_phase: st.phase, ...deferred_to ? { deferred_to } : {} };
     endAttempt("deferred");
     st.generation++;
     st.status = "Draft";
@@ -4958,7 +4960,7 @@ var specs = {
   approve_scope: { description: "OWNER ONLY: record explicitly authorized phases and environments. Do not infer approval.", fields: { project_id: s, event_id: s, phases: array(s), environments: array(s), reason: s }, required: ["project_id", "event_id", "phases", "environments", "reason"] },
   set_requirements: { description: "OWNER ONLY: register full approved source requirement inventory, including unmapped entries. Deleted source entries remain review items.", fields: { project_id: s, event_id: s, source: s, source_revision: s, requirements: array({ type: "object", properties: { id: s, epic: s, phase: s, stories: array(s), source_path: s, text: s, source_revision: s }, required: ["id", "epic", "phase", "stories"], additionalProperties: false }) }, required: ["project_id", "event_id", "source", "source_revision", "requirements"] },
   exclude_requirement: { description: "OWNER ONLY: authorize exclusion with retained rationale/history.", fields: { project_id: s, event_id: s, requirement_id: s, reason: s }, required: ["project_id", "event_id", "requirement_id", "reason"] },
-  exclude_story: { description: "OWNER ONLY: explicitly defer a child; exclusion is not shipped.", fields: { ...common, reason: s }, required: ["project_id", "story_id", "event_id", "reason"] },
+  exclude_story: { description: 'OWNER ONLY: explicitly defer or remove a child with rationale and the revised phase scope (deferred_to: target phase or "removed"; required on strict projects); exclusion is not shipped.', fields: { ...common, reason: s, deferred_to: s }, required: ["project_id", "story_id", "event_id", "reason"] },
   waive_criterion: { description: "OWNER ONLY: explicitly waive specified criterion revision for functional/deployed verification, bounded to current generation and approved environment; retained rationale is visible.", fields: { ...common, criterion_index: i, criterion_revision: i, kinds: array({ enum: ["functional", "deployed"] }), environment: s, reason: s }, required: ["project_id", "story_id", "event_id", "criterion_index", "criterion_revision", "kinds", "environment", "reason"] },
   revise_story: { description: "OWNER ONLY: revise criteria/proof plan or metadata; reset to Draft and invalidate attempts. Preserve snapshots.", fields: { ...common, reason: s, criteria: array(s), proof_plan: array(plan), dependencies: array(s), title: s, epic: s, phase: s, priority: i }, required: ["project_id", "story_id", "event_id", "reason"] },
   claim_story: { description: "Claim Ready story. Returns active attempt and secret lease token; preserve securely. No concurrent claims.", fields: { ...common, binding: s, worker: s, branch: s, starting_commit: s, plan: s }, required: ["project_id", "story_id", "event_id", "binding", "worker", "branch", "starting_commit", "plan"] },

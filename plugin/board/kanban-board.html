@@ -229,7 +229,8 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
           e.unmapped_stories.length ? el("span", { class: "chip blocked" }, `${e.unmapped_stories.length} untraced`) : null,
           e.proposals.length ? el("span", { class: "chip pending" }, `${e.proposals.length} proposed`) : null,
           e.excluded.length ? el("span", { class: "chip waived" }, `${e.excluded.length} excluded`) : null),
-        e.remaining.length ? el("div", { class: "muted", style: "font-size:.76rem" }, "Remaining: " + e.remaining.map(r => `${r.id} (${r.status})`).join(", ")) : null);
+        e.remaining.length ? el("div", { class: "muted", style: "font-size:.76rem" }, "Remaining: " + e.remaining.map(r => `${r.id} (${r.status})`).join(", ")) : null,
+        e.excluded.length ? el("div", { class: "muted", style: "font-size:.76rem" }, "Excluded: " + e.excluded.map(x => `${x.id}${x.deferred_to ? ` → ${x.deferred_to}` : ""}`).join(", ")) : null);
     }) : [el("div", { class: "epic" }, el("span", { class: "muted" }, "No stories in this phase yet. Import a plan or propose intake from Claude Code."))]));
     const q = state.query.toLowerCase();
     const visible = ov.stories.filter(s => (!state.epic || s.epic === state.epic) && (!q || [s.id, s.title, s.epic].join(" ").toLowerCase().includes(q)));

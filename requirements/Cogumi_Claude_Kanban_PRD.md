@@ -247,7 +247,7 @@ As the owner, I want omitted work detected before an epic looks complete.
 
 - Map every approved requirement to one or more stable story IDs or an explicitly authorized exclusion. Display unmapped requirements and their source revision.
 - Compare imported backlog against the full source, not only tasks already present. Prevent scope completion claims while required coverage is unresolved.
-- Removing or deferring a required story requires an explicit owner decision with rationale (exclude_story, exclude_requirement); a revised phase scope is recorded through approve_scope. Keep removed records and historical evidence auditable.
+- Removing or deferring a required story requires an explicit owner decision, rationale and revised phase scope: exclude_story records the reason, the phase the story came from and `deferred_to` (the phase it moves to, or "removed"; required on strict projects), and the board shows it. Keep removed records and historical evidence auditable.
 
 ### EPC 01 Compute phase specific epic completion
 
