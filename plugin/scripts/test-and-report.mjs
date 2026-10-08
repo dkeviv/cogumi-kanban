@@ -6,11 +6,26 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { send, enqueue, flush, redact } from './reporting.mjs';
-import { deliverAsReporter } from '../dist/lib.mjs';
+import { deliverAsReporter, dataHome } from '../dist/lib.mjs';
 import { checkpoint, observe, runsFolder, resolveRejected } from './checkpoint.mjs';
 
 const OUTPUT_LIMIT = 8 * 1024 * 1024;
 const git = args => spawnSync('git', args, { encoding: 'utf8' });
+
+// The wrapper deletes a stale assertion file before each run, so the path must be a
+// scratch location (temp directory or the data root), never product source.
+async function safeAssertionPath(file) {
+    const resolved = path.resolve(file);
+    let dir = path.dirname(resolved);
+    try { dir = await fs.realpath(dir); } catch { /* created by the check */ }
+    const within = (d, root) => d === root || d.startsWith(root + path.sep);
+    const roots = await Promise.all([os.tmpdir(), dataHome()].map(r => fs.realpath(r).catch(() => path.resolve(r))));
+    const top = git(['rev-parse', '--show-toplevel']);
+    const checkout = top.status === 0 ? await fs.realpath(top.stdout.trim()) : null;
+    if (!roots.some(r => within(dir, r)) || (checkout && within(dir, checkout)))
+        throw Error(`assertion_file must be under ${roots.join(' or ')} and outside the checkout (it is deleted before each run)`);
+    return resolved;
+}
 
 function validate(cfg) {
     if (!Array.isArray(cfg.command) || !cfg.command.length || cfg.command.some(x => typeof x !== 'string')) throw Error('command must be argument array');
@@ -66,6 +81,11 @@ function execute(cfg, run) {
     });
 }
 
+// Exit codes: the command's own non-zero code when the check failed; 0 when it passed and
+// was recorded; 2 when it ran (or passed) but its result could not be recorded; 4 when
+// the command was never started (configuration, binding, or registration refused).
+let executed = false;
+
 async function main() {
     process.umask(0o077);
     const cfg = JSON.parse(await fs.readFile(process.argv[2], 'utf8'));
@@ -73,6 +93,7 @@ async function main() {
     const start = git(['rev-parse', 'HEAD']), before = git(['status', '--porcelain']);
     if (start.status !== 0 || before.status !== 0) throw Error('Cannot identify starting source/tree; command not executed');
     observe(cfg); // binding check before anything runs
+    const assertionPath = cfg.assertion_file ? await safeAssertionPath(cfg.assertion_file) : null;
     const source = start.stdout.trim(), dirtyStart = before.stdout.trim().length > 0;
     const run = await send('begin_run', {
         binding: cfg.binding, project_id: cfg.project_id, story_id: cfg.story_id, attempt_id: cfg.attempt_id,
@@ -84,10 +105,11 @@ async function main() {
     const logPath = path.join(runsFolder(), run.id + '.json');
     await fs.writeFile(logPath, JSON.stringify({ project_id: cfg.project_id, story_id: cfg.story_id, run, command: redact(cfg.command), state: 'started', pid: process.pid, host: os.hostname() }), { mode: 0o600 });
     if (run.kind === 'deployed' && (!run.target_url || cfg.target_url !== run.target_url)) throw Error('Deployed config must explicitly target observed release URL');
-    if (cfg.assertion_file) await fs.rm(cfg.assertion_file, { force: true });
+    if (assertionPath) await fs.rm(assertionPath, { force: true });
     const context = { ...cfg, attempt_id: run.attempt_id };
     await checkpoint(context, 'before_test');
 
+    executed = true;
     const result = await execute(cfg, run);
     const end = git(['rev-parse', 'HEAD']), after = git(['status', '--porcelain']);
     const drift = end.status !== 0 || after.status !== 0 || end.stdout.trim() !== source;
@@ -120,7 +142,7 @@ async function main() {
         const own = delivered.find(r => r.event_id === event_id);
         if (own?.rejected) {
             reportFailed = true;
-            if (await resolveRejected(context, run, own.rejected)) await flush(context);
+            if (await resolveRejected(context, run)) await flush(context);
         }
     } catch (e) {
         console.error(e.message);
@@ -139,4 +161,8 @@ async function main() {
     process.exitCode = passed ? (reportFailed ? 2 : 0) : (typeof result.status === 'number' && result.status !== 0 ? result.status : 1);
 }
 
-main().catch(e => { console.error(e.message); process.exitCode = 2; });
+main().catch(e => {
+    console.error(e.message);
+    if (!executed) console.error('[cogumi] The command was not run.');
+    process.exitCode = executed ? 2 : 4;
+});

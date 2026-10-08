@@ -8,7 +8,7 @@ It is the Claude edition of Cogumi Kanban (originally a ChatGPT Sites plugin). T
 
 | Path | What it is |
 |---|---|
-| `requirements/Cogumi_Claude_Kanban_PRD.md` | Product requirements for this edition (v2.0) |
+| `requirements/Cogumi_Claude_Kanban_PRD.md` | Product requirements for this edition (v2.1) |
 | `requirements/Cogumi_Claude_Kanban_PRD.docx` | Same PRD as a Word document |
 | `requirements/original/` | The ChatGPT edition's PRD v1.1, for traceability |
 | `requirements/COVERAGE.md` | Requirement-by-requirement coverage with the code and tests that satisfy each item |
@@ -21,7 +21,7 @@ It is the Claude edition of Cogumi Kanban (originally a ChatGPT Sites plugin). T
 | `plugin/scripts/` | Reporter scripts: durable outbox, checkpoints, test wrapper, workflow helper, OpenSpec import |
 | `plugin/board/kanban-board.html` | The Kanban board page (Artifact and snapshot) |
 | `plugin/skills/`, `plugin/commands/`, `plugin/hooks/` | Workflow skill, slash commands, hook registration |
-| `plugin/tests/` | 130+ tests: the original engine suites plus local storage, MCP, reporter scripts, import, board views, the board page (jsdom), hook, snapshot and packaging |
+| `plugin/tests/` | 146 tests: the original engine suites plus local storage, MCP, reporter scripts, import, board views, the board page (jsdom), hook, snapshot and packaging |
 
 ## Requirements
 
@@ -61,7 +61,7 @@ sh plugin/bin/kanban cli doctor | export --out FILE | import FILE [--replace] | 
 sh plugin/bin/kanban openspec SPEC_DIRECTORY MAPPING.json OUTPUT.json
 ```
 
-`resume` and `before-close` exit with code 3 while pending or rejected events remain for the attempt. A rejected result is recorded as a blocked run; fix the cause and `report requeue` to resend it.
+`workflow test` exits 0 when the check passed and was recorded, with the command's own code when it failed, 2 when it ran but the result was not recorded, and 4 when the command was never run. `resume` and `before-close` exit 3 while pending or unresolved rejected events remain for the attempt. A rejected result is recorded as a blocked run, and rejections nothing waits on are filed away automatically; for the rest, fix the cause and `report requeue EVENT_ID`, or with the owner's approval `report discard EVENT_ID --reason "..."`.
 
 ## Where data lives
 
@@ -71,7 +71,7 @@ Durability boundary: evidence waits in the outbox until delivered, and checkpoin
 
 ## Trust boundary
 
-The MCP server speaks only stdio to Claude Code and opens no port. The owner is your OS user. Reporter scripts act as a reporter scoped to one project, story and attempt, which the engine enforces; this prevents mistakes, not a malicious process running as you. No credentials are needed or stored; credential-looking text in captured output is redacted.
+The MCP server speaks only stdio to Claude Code and opens no port. The owner is your OS user. Reporter scripts act as a reporter scoped to one project, story and attempt, which the engine enforces; this prevents mistakes, not a malicious process running as you. No external credentials are needed. Credential-looking text in tool input and captured output is redacted before it is stored. Claim lease tokens are short-lived local coordination values: they stay in the database (owner-only file), never appear on the board or in snapshots, and are removed from exports.
 
 ## Develop
 

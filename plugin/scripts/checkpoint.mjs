@@ -94,15 +94,18 @@ function rejectionSummary(list) {
 
 // A run whose reported result was rejected is closed honestly as blocked, never left
 // unresolved and never treated as passing (PRD REL 02).
-export async function resolveRejected(cfg, run, reason) {
+// The record is deterministic per run (no timestamps, fixed text) so a retry of the
+// same resolution is recognised as the same event, never a conflicting one.
+export async function resolveRejected(cfg, run) {
     try {
         await enqueue('record_evidence', {
             project_id: cfg.project_id, story_id: cfg.story_id, event_id: `rejected-${run.id}`,
-            evidence: { run_id: run.id, attempt_id: run.attempt_id, criterion_revision: run.criterion_revision, commit: run.commit, end_commit: run.commit, dirty: true, mocked: run.mocked, result: 'blocked', exit_code: null, error: `Reported result was rejected by the tracker: ${String(reason).slice(0, 500)}; investigate before rerunning`, output: 'Result rejected; see the rejected outbox entry for the original evidence', finished_at: new Date().toISOString() },
+            evidence: { run_id: run.id, attempt_id: run.attempt_id, criterion_revision: run.criterion_revision, commit: run.commit, end_commit: run.commit, dirty: true, mocked: run.mocked, result: 'blocked', exit_code: null, error: 'Reported result was rejected by the tracker; see the rejected outbox entry for the reason and original evidence, and investigate before rerunning', output: '' },
         });
         return true;
     } catch (e) {
         if (e.rejected) return false; // the blocked record itself was refused earlier
+        if (/reused with different payload/.test(e.message)) return true; // already recorded
         throw e;
     }
 }
@@ -199,7 +202,7 @@ export async function resume(cfg) {
     for (const r of refused) {
         const run = runsById.get(r.run_id);
         if (run && !r.event_id.startsWith('rejected-') && !remote.completed_run_ids?.includes(run.id))
-            resolvedAny = (await resolveRejected(cfg, run, r.error)) || resolvedAny;
+            resolvedAny = (await resolveRejected(cfg, run)) || resolvedAny;
     }
     if (resolvedAny) await flush(scope);
     const result = remote.current_attempt === false ? { ...remote, replayed_history: true } : await checkpoint(cfg, 'resume');

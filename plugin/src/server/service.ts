@@ -19,6 +19,15 @@ export const readOnlyTools = [...readActions, ...viewTools.map(t => t.name)];
 
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+// Engine argument validation throws ZodErrors whose message is a JSON blob; turn them
+// into one readable line naming each missing or invalid field.
+export function readable(error: unknown) {
+    const e = error as any;
+    if (e?.name !== 'ZodError' || !Array.isArray(e.issues)) return error;
+    const fields = e.issues.map((i: any) => `${i.path?.length ? i.path.join('.') : 'argument'}: ${i.message}`).join('; ');
+    return Object.assign(new Error(`Invalid arguments: ${fields}`), { issues: e.issues });
+}
+
 export class KanbanService {
     private store: Store | null = null;
     private file?: string;
@@ -50,7 +59,7 @@ export class KanbanService {
                 return await runWithDb(this.db(), BOARD_KEY, action, input, actor);
             } catch (error) {
                 lastError = error;
-                if (!isTransient(error)) throw error;
+                if (!isTransient(error)) throw readable(error);
                 if (/unable to open/i.test(String((error as any)?.message))) { this.close(); }
                 await pause(25 * 2 ** attempt + Math.random() * 25);
             }

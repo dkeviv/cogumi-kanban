@@ -15,10 +15,28 @@ type Reply = { jsonrpc: '2.0'; id: Id; result?: unknown; error?: { code: number;
 
 // Best-effort id recovery from a message too large to parse, so the caller's request
 // is answered instead of waiting for a timeout.
+// Only an "id" key at the top level of the object counts; when unsure, answer null.
 export function sniffId(prefix: string): Id {
-    const m = /"id"\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+)/.exec(prefix);
-    if (!m) return null;
-    try { return JSON.parse(m[1]); } catch { return null; }
+    let depth = 0, inString = false, escaped = false, keyStart = -1;
+    for (let i = 0; i < prefix.length; i++) {
+        const c = prefix[i];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (c === '\\') escaped = true;
+            else if (c === '"') {
+                inString = false;
+                if (depth === 1 && keyStart >= 0 && prefix.slice(keyStart, i + 1) === '"id"') {
+                    const m = /^\s*:\s*("(?:[^"\\]|\\.)*"|-?\d+)/.exec(prefix.slice(i + 1));
+                    if (m) { try { return JSON.parse(m[1]); } catch { return null; } }
+                }
+            }
+            continue;
+        }
+        if (c === '"') { inString = true; keyStart = i; }
+        else if (c === '{' || c === '[') depth++;
+        else if (c === '}' || c === ']') depth--;
+    }
+    return null;
 }
 
 export function createHandler(service: KanbanService, pluginRoot: string) {

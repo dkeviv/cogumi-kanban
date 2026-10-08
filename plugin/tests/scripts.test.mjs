@@ -65,8 +65,9 @@ test('reporter configuration with a mismatched binding never runs the command', 
         const marker = path.join(f.dir, 'ran');
         await f.configure([process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'1')`], { binding: 'https://github.com/someone/else' });
         const r = await invoke('scripts/test-and-report.mjs', [f.cfg], f.repo, f.env);
-        assert.equal(r.code, 2);
+        assert.equal(r.code, 4);
         assert.match(r.err, /binding mismatch/);
+        assert.match(r.err, /command was not run/);
         await assert.rejects(fs.access(marker));
         assert.equal((await f.story()).runs.length, 0);
     } finally { await f.cleanup(); }

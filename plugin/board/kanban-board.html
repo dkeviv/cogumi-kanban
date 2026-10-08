@@ -414,6 +414,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
       throw e;
     }
   }
+  const reworkDraft = () => ["rw-reason", "rw-observed", "rw-expected", "rw-repro"].some(id => $(id)?.value.trim());
   // Connection and access failures withdraw every rendered record, not just the cards.
   function retract() {
     state.overview = null;
@@ -425,7 +426,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     $("coverage").textContent = "";
     $("unmapped-block").hidden = true;
     $("epics").replaceChildren(el("div", { class: "epic" }, el("span", { class: "muted" }, "Board data is hidden while the tracker is unavailable.")));
-    closeSheet();
+    if (!reworkDraft()) closeSheet(); // never throw away an unsent rework report
   }
   function handleError(e) {
     const code = e?.code;
@@ -450,6 +451,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     const data = result.payload?.result ?? result.payload;
     if (!data || !data.stories) return;
     if (data.project?.id !== state.projectId) return; // a late answer for a previous project
+    if (!$("project-select").options.length && state.projects.length) renderProjects(); // after a reconnect
     if (state.phase && !data.phases.includes(state.phase)) { state.phase = ""; store.set(phaseKey(), ""); watchBoard(); return; }
     // Re-render only when the records changed, so polling never steals focus or a click.
     const { generated_at: _at, ...records } = data;

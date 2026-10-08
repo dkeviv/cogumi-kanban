@@ -4053,25 +4053,28 @@ var NEVER = INVALID;
 
 // src/engine/checkpoints.ts
 var CREDENTIAL_KEY = /(?:^|[_-])(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret)$|^(?:authorization|cookie|set-cookie|apikey)$/i;
+var B = "(?<![A-Za-z0-9_-])";
 var CREDENTIAL_VALUE = new RegExp([
-  "cgk_[a-f0-9-]{72}",
-  "(?:Bearer|Basic)\\s+[A-Za-z0-9._~+/=-]{8,}",
-  "sk-[A-Za-z0-9_-]{16,}",
-  "gh[pousr]_[A-Za-z0-9]{20,}",
-  "github_pat_[A-Za-z0-9_]{20,}",
-  "xox[abpr]-[A-Za-z0-9-]{10,}",
-  "AKIA[0-9A-Z]{16}",
-  "AIza[0-9A-Za-z_-]{30,}",
-  "eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}",
+  `${B}cgk_[a-f0-9-]{72}`,
+  `\\b(?:Bearer|Basic)\\s+(?=[A-Za-z._~-]*[0-9+/=])[A-Za-z0-9._~+/=-]{12,}`,
+  `${B}sk-[A-Za-z0-9_-]{16,}`,
+  `${B}gh[pousr]_[A-Za-z0-9]{20,}`,
+  `${B}github_pat_[A-Za-z0-9_]{20,}`,
+  `${B}xox[abpr]-[A-Za-z0-9-]{10,}`,
+  `${B}AKIA[0-9A-Z]{16}`,
+  `${B}AIza[0-9A-Za-z_-]{30,}`,
+  `${B}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}`,
   "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
 ].join("|"));
+var IDENTIFIER_KEY = /(?:^|_)ids?$|^(?:binding|bindings|branch|worker|commit|starting_commit|end_commit|lease_token|phase|phases|environment|environments|status|kind|classification|check_ids|dependencies|requirement_ids|version|criterion_revision|result)$/;
 function redactCredentials(text) {
   return text.replace(new RegExp(CREDENTIAL_VALUE.source, "g"), "[redacted]");
 }
-function redactValues(value) {
+function redactValues(value, key = "") {
+  if (IDENTIFIER_KEY.test(key)) return value;
   if (typeof value === "string") return redactCredentials(value);
-  if (Array.isArray(value)) return value.map(redactValues);
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValues(v)]));
+  if (Array.isArray(value)) return value.map((v) => redactValues(v, key));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValues(v, k)]));
   return value;
 }
 function assertNoCredentials(value) {
@@ -5160,6 +5163,12 @@ var tools2 = [...tools, ...viewTools];
 var toolNames2 = tools2.map((t) => t.name);
 var readOnlyTools = [...readActions, ...viewTools.map((t) => t.name)];
 var pause = (ms) => new Promise((r) => setTimeout(r, ms));
+function readable(error) {
+  const e = error;
+  if (e?.name !== "ZodError" || !Array.isArray(e.issues)) return error;
+  const fields = e.issues.map((i2) => `${i2.path?.length ? i2.path.join(".") : "argument"}: ${i2.message}`).join("; ");
+  return Object.assign(new Error(`Invalid arguments: ${fields}`), { issues: e.issues });
+}
 var KanbanService = class {
   store = null;
   file;
@@ -5192,7 +5201,7 @@ var KanbanService = class {
         return await runWithDb(this.db(), BOARD_KEY, action, input, actor);
       } catch (error) {
         lastError = error;
-        if (!isTransient(error)) throw error;
+        if (!isTransient(error)) throw readable(error);
         if (/unable to open/i.test(String(error?.message))) {
           this.close();
         }
@@ -5320,10 +5329,17 @@ async function importBoard(service, data, { replace = false } = {}) {
     await service.writeBoard(board, revision);
   return result;
 }
+function stripLeaseTokens(project) {
+  const p = structuredClone(project);
+  for (const s3 of p.stories || []) if (s3.claim) delete s3.claim.token;
+  for (const record of Object.values(p.eventRecords || {}))
+    if (typeof record?.payload === "string") record.payload = record.payload.replace(/"lease_token":"[^"]*"/g, '"lease_token":"[removed]"');
+  return p;
+}
 async function exportBoard(service) {
   const { board } = await service.readBoard();
   const projects = [];
-  for (const p of board.projects || []) projects.push(await service.call("get_board", { project_id: p.id }));
+  for (const p of board.projects || []) projects.push(stripLeaseTokens(await service.call("get_board", { project_id: p.id })));
   return projects;
 }
 

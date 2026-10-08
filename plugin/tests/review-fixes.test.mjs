@@ -29,13 +29,14 @@ test('a rejected result is recorded as blocked, never resent on resume, and befo
         assert.equal(s.eligibility.functional, false);
         const resumed = await invoke('scripts/workflow.mjs', ['resume', f.cfg], f.repo, f.env);
         assert.equal(resumed.code, 0, resumed.err + resumed.out); // already resolved: nothing new rejected
-        const rejectedFiles = await fs.readdir(path.join(f.env.COGUMI_OUTBOX, '.rejected'));
-        assert.equal(rejectedFiles.length, 1, 'the rejected event is never re-enqueued');
+        const top = async () => (await fs.readdir(path.join(f.env.COGUMI_OUTBOX, '.rejected'))).filter(n => n.endsWith('.json'));
+        // The run already has its (blocked) result, so the rejection is settled as history.
+        assert.equal((await top()).length, 0, 'never re-enqueued, and filed away once resolved');
+        assert.equal((await fs.readdir(path.join(f.env.COGUMI_OUTBOX, '.rejected', 'resolved'))).length, 1);
         const closing = await invoke('scripts/workflow.mjs', ['before-close', f.cfg], f.repo, f.env);
-        assert.equal(closing.code, 3, 'before-close refuses while rejected events remain');
-        assert.match(closing.err, /1 rejected/);
+        assert.equal(closing.code, 0, closing.err);
         s = await f.story();
-        assert.match(s.checkpoints.at(-1).delivery_error, /rejected event/);
+        assert.equal(s.evidence.length, 1);
     } finally { await f.cleanup(); }
 });
 
@@ -100,10 +101,10 @@ test('credentials sent straight through MCP tools are redacted before storage an
     const c = await go('claim_story', { worker: 'w', branch: 'b', starting_commit: A, plan: 'p' });
     const lease = { worker: 'w', attempt_id: c.attempt_id, lease_token: c.claim.token };
     await go('set_commit', { ...lease, commit: A });
-    const run = await go('begin_run', { ...lease, kind: 'functional', commit: A, command: 'curl -H "Authorization: Bearer abcdefghijklmnopq" x', environment: 'local', criteria: [0], verification_types: ['logic'], mocked: false, dirty: false });
+    const run = await go('begin_run', { ...lease, kind: 'functional', commit: A, command: 'curl -H "Authorization: Bearer abcdefgh12345678" x', environment: 'local', criteria: [0], verification_types: ['logic'], mocked: false, dirty: false });
     await go('record_evidence', { evidence: { run_id: run.id, attempt_id: c.attempt_id, criterion_revision: run.criterion_revision, commit: A, end_commit: A, dirty: false, mocked: false, result: 'pass', exit_code: 0, output: 'token ghp_abcdefghijklmnopqrstuvwxyz0123 leaked' } });
     const raw = JSON.stringify(await go('get_board'));
-    assert.doesNotMatch(raw, /ghp_abcdefghij|abcdefghijklmnopq/);
+    assert.doesNotMatch(raw, /ghp_abcdefghij|abcdefgh12345678/);
     const d = await service.call('story_detail', { project_id: p.id, story_id: 'S' });
     assert.match(d.evidence[0].output, /\[redacted\]/);
     assert.match(d.runs[0].command, /\[redacted\]/);

@@ -233,13 +233,13 @@ test('reporter wrapper leaves the checkout Git status and Git configuration unch
 test('output with token-like keys and credential-looking text is checkpointed and recorded with redaction (scenario 19)', async () => {
     const f = await scenario();
     try {
-        await f.configure([process.execPath, '-e', "console.log(JSON.stringify({max_tokens:512,token_count:3,usage:{prompt_tokens:1}}));console.log('Authorization: Bearer abcdefghijklmnop')"]);
+        await f.configure([process.execPath, '-e', "console.log(JSON.stringify({max_tokens:512,token_count:3,usage:{prompt_tokens:1}}));console.log('Authorization: Bearer abcdefgh12345678')"]);
         const r = await invoke('scripts/test-and-report.mjs', [f.cfg], f.repo, f.env);
         assert.equal(r.code, 0, r.err);
         const s = await f.story();
         assert.equal(s.evidence.length, 1);
         assert.match(s.evidence[0].output, /"max_tokens":512/);
-        assert.doesNotMatch(s.evidence[0].output, /abcdefghijklmnop/);
+        assert.doesNotMatch(s.evidence[0].output, /abcdefgh12345678/);
         assert.match(s.evidence[0].output, /\[redacted\]/);
         assert.equal(s.checkpoints[0].stage, 'after_test');
         assert.equal(s.eligibility.functional, true);

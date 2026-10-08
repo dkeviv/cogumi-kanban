@@ -7,10 +7,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { deliverAsReporter, dataHome, isTransient, redactCredentials, CREDENTIAL_KEY } from '../dist/lib.mjs';
+import { deliverAsReporter, dataHome, isTransient, redactValues, CREDENTIAL_KEY } from '../dist/lib.mjs';
 
 const pause = ms => new Promise(r => setTimeout(r, ms));
 const EVENT_FILE = /^\d+-.+\.json$/;
+const eventIdOf = name => name.replace(/^\d+-/, '').replace(/\.json$/, '');
 const ID = /^[A-Za-z0-9_.:-]{1,120}$/;
 
 export function folder() {
@@ -97,7 +98,7 @@ async function acknowledgment(dir, eventId) {
 export async function rejection(eventId) {
     try {
         for (const name of await fs.readdir(rejectedFolder()))
-            if (name.endsWith(`-${eventId}.json`)) return JSON.parse(await fs.readFile(path.join(rejectedFolder(), name), 'utf8'));
+            if (EVENT_FILE.test(name) && eventIdOf(name) === eventId) return JSON.parse(await fs.readFile(path.join(rejectedFolder(), name), 'utf8'));
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
     return null;
 }
@@ -105,11 +106,11 @@ export async function rejection(eventId) {
 // Replaces credential-looking substrings in every string of a JSON value and drops
 // credential-named keys. Applied at enqueue so the outbox, checkpoints and the database
 // all hold the same redacted copy, and a checkpoint can never be refused for a key.
+const dropCredentialKeys = value => Array.isArray(value) ? value.map(dropCredentialKeys)
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)).map(([k, v]) => [k, dropCredentialKeys(v)]))
+    : value;
 export function redact(value) {
-    if (typeof value === 'string') return redactCredentials(value);
-    if (Array.isArray(value)) return value.map(redact);
-    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)).map(([k, v]) => [k, redact(v)]));
-    return value;
+    return redactValues(dropCredentialKeys(value)); // identifiers are never rewritten
 }
 
 const samePayload = (a, b) => JSON.stringify({ action: a.action, args: a.args }) === JSON.stringify({ action: b.action, args: b.args });
@@ -206,7 +207,7 @@ export async function flush(scope) {
         }
         // Clear the recorded failure only if its event is no longer waiting in the outbox.
         const failure = await lastFailure();
-        if (failure && !(await fs.readdir(dir)).some(n => EVENT_FILE.test(n) && n.endsWith(`-${failure.event_id}.json`)))
+        if (failure && !(await fs.readdir(dir)).some(n => EVENT_FILE.test(n) && eventIdOf(n) === failure.event_id))
             await fs.rm(path.join(dir, '.last-failure'), { force: true });
         return results;
     });
@@ -215,7 +216,10 @@ export async function flush(scope) {
 export async function lastFailure(scope) {
     try {
         const failure = JSON.parse(await fs.readFile(path.join(folder(), '.last-failure'), 'utf8'));
-        return !scope || !failure.scope || inScope({ args: failure.scope }, scope) ? failure : null;
+        // A failed event without an attempt (or project/story) blocks every scope behind it.
+        const f = failure.scope || {};
+        const matches = !scope || ['project_id', 'story_id', 'attempt_id'].every(k => !f[k] || !scope[k] || f[k] === scope[k]);
+        return matches ? failure : null;
     } catch { return null; }
 }
 
@@ -236,6 +240,46 @@ export async function requeue(ids) {
         }
         return moved;
     });
+}
+
+// Rejections that need no further action are filed under .rejected/<kind>/ so they
+// stop blocking before-close while staying on disk as history:
+//   resolved  - nothing in the tracker waits on them (a begin_run that created no run,
+//               a heartbeat or checkpoint, or a result whose run is already recorded)
+//   discarded - the owner explicitly acknowledged them (report.mjs discard)
+async function file(scopeFilter, kind, note) {
+    const dir = folder();
+    return locked(dir, async () => {
+        const moved = [];
+        let names = [];
+        try { names = (await fs.readdir(rejectedFolder())).filter(n => EVENT_FILE.test(n)).sort(); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        for (const name of names) {
+            const record = JSON.parse(await fs.readFile(path.join(rejectedFolder(), name), 'utf8'));
+            const reason = scopeFilter(record);
+            if (!reason) continue;
+            await fs.mkdir(path.join(rejectedFolder(), kind), { recursive: true, mode: 0o700 });
+            await atomic(path.join(rejectedFolder(), kind, name), { ...record, [kind]: { at: new Date().toISOString(), reason: note || reason } });
+            await fs.unlink(path.join(rejectedFolder(), name));
+            moved.push({ event_id: record.event.args.event_id, action: record.event.action, reason: note || reason });
+        }
+        return moved;
+    });
+}
+
+export function settle(scope, completedRunIds = []) {
+    return file(record => {
+        if (!inScope(record.event, scope)) return null;
+        const { action, args } = record.event;
+        if (action === 'begin_run') return 'no run was registered, so nothing waits on it';
+        if (['heartbeat_attempt', 'checkpoint_attempt', 'restore_checkpoint'].includes(action)) return 'informational event';
+        if (action === 'record_evidence' && completedRunIds.includes(args.evidence?.run_id)) return 'the run already has a recorded result';
+        return null;
+    }, 'resolved');
+}
+
+export function discard(ids, reason) {
+    if (!ids.length || !reason?.trim()) throw Error('discard needs at least one EVENT_ID and --reason "why it can be dropped"');
+    return file(record => (ids.includes(record.event.args.event_id) ? 'owner discarded' : null), 'discarded', `owner discarded: ${reason.trim()}`);
 }
 
 export async function rejected(scope) {

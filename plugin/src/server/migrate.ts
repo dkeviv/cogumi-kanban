@@ -73,9 +73,19 @@ export async function importBoard(service: KanbanService, data: any, { replace =
     return result;
 }
 
+// Lease tokens are short-lived coordination values, not data worth keeping: exports
+// (backups) carry neither the live claim token nor tokens inside stored event payloads.
+export function stripLeaseTokens(project: any) {
+    const p = structuredClone(project);
+    for (const s of p.stories || []) if (s.claim) delete s.claim.token;
+    for (const record of Object.values(p.eventRecords || {}) as any[])
+        if (typeof record?.payload === 'string') record.payload = record.payload.replace(/"lease_token":"[^"]*"/g, '"lease_token":"[removed]"');
+    return p;
+}
+
 export async function exportBoard(service: KanbanService) {
     const { board } = await service.readBoard();
     const projects = [];
-    for (const p of board.projects || []) projects.push(await service.call('get_board', { project_id: p.id }));
+    for (const p of board.projects || []) projects.push(stripLeaseTokens(await service.call('get_board', { project_id: p.id })));
     return projects;
 }

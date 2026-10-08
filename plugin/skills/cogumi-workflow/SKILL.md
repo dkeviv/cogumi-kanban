@@ -29,13 +29,15 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 
 ## 3. Plan
 
-- PRD or backlog: `preview_import`, show the preview, then `import_stories` with stable IDs, phases, priorities, dependencies, criteria and a `proof_plan` per criterion (type, expected, evidence_requirement, checks with id/kind/command/assertions). Then `set_requirements` with the **full** requirement inventory, including unmapped items.
+- PRD or backlog: `preview_import`, show the preview, then `import_stories` with stable IDs, phases, priorities, dependencies, criteria and a `proof_plan` per criterion (type, expected, evidence_requirement, checks with id/kind/command/assertions). Then `set_requirements` with the **full** requirement inventory, including unmapped items. Pass the **same `source` and `source_revision`** to both calls; a different or missing revision marks every mapped story for source review and Ready is refused until the owner revises it.
+- With strict checks (the default) each check's `command` must equal the reporter config's `command` joined with single spaces, exactly, and every criterion needs both a `functional` and a `deployed` check.
 - Informal request: `propose_intake` (stories stay Draft), show it, and record the user's decision with `decide_intake`.
-- Owner approves phases and environments with `approve_scope`. Move stories Draft → Backlog → Ready with `update_status`.
+- Owner approves phases and environments with `approve_scope`. Move stories Draft → Backlog → Ready with `update_status` (Ready needs a `reason`; tool errors name any missing field).
 
 ## 4. Claim and implement
 
-1. `next_story` picks eligible work. `claim_story` with binding, worker (e.g. `claude:<session id>`), branch, exact starting commit and acceptance plan. Keep `attempt_id` and `claim.token` (the lease token) for this session's tool calls.
+1. `next_story` picks eligible work. With strict checks, `claim_story` needs a `start_session` from the last 15 minutes with the same commit as `starting_commit` and `pending_events: 0`, so call `start_session` again if planning took longer or HEAD moved. `claim_story` with binding, worker (e.g. `claude:<session id>`), branch, exact starting commit and acceptance plan. Keep `attempt_id` and `claim.token` (the lease token) for this session's tool calls.
+   - The lease lasts one hour. Record `set_commit` early, and call `renew_claim` before long stretches of work; `workflow test` renews it while checks run. If it expires before you recorded a commit and HEAD has moved, the owner moves the story to Backlog (ending the attempt) and you claim it again from the current HEAD; the code is safe in Git.
 2. Write a reporter config (outside the checkout):
 
 ```json
@@ -44,7 +46,21 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
   "binding": "<binding>", "environment": "local", "kind": "functional",
   "command": ["npm", "test", "--", "checks/S1.test.mjs"],
   "criteria": [0, 1], "verification_types": ["api"], "check_ids": ["S1-api"],
-  "mocked": false, "assertion_file": "/abs/path/assertions.json", "timeout_ms": 300000
+  "mocked": false, "timeout_ms": 300000,
+  "assertion_file": "/Users/<you>/.cogumi-claude-kanban/configs/S1-assertions.json",
+  "artifact": "https://ci.example.com/runs/42/trace.zip"
+}
+```
+
+`assertion_file` must be under the data root or the system temp directory, because it is deleted before each run. `artifact` is optional (an https reference to a preserved trace, report or screenshot). For the deployed check use a separate config for the deployment environment:
+
+```json
+{
+  "...": "same project_id, story_id, attempt_id, binding",
+  "environment": "production", "kind": "deployed", "release_version": "<provider version_id>",
+  "target_url": "<the release's observed https URL>",
+  "command": ["npm", "run", "check:deployed"], "check_ids": ["S1-deployed"],
+  "criteria": [0, 1], "verification_types": ["browser"], "mocked": false
 }
 ```
 
@@ -53,12 +69,12 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 ## 5. Verify
 
 - `sh <plugin>/bin/kanban workflow test CONFIG` runs the real command, registers the run, captures output, exit status, commit and dirty state, and delivers evidence through the durable outbox. The check writes `[{check_id,name,result}]` to `$COGUMI_ASSERTION_FILE`.
-- Exit codes: the command's own code on failure, 2 when the check passed but reporting failed (look at `kanban workflow observe`), 0 when passed and recorded.
+- Exit codes: 0 passed and recorded; the command's own non-zero code when the check failed; 2 when it ran but its result was not recorded (look at `kanban workflow observe`); 4 when the command was never run (configuration, binding or run registration refused; the message says why).
 - Once functional proof qualifies, `update_status` → Ready to ship (the engine refuses otherwise; read the reasons).
 
 ## 6. Release and close
 
-1. Deploy with the project's real publisher and wait for a terminal status. Save `{provider, deployment_id, version_id, commit_sha, status, url, environment?}` to a JSON file.
+1. Deploy with the project's real publisher and wait for a terminal status. Save `{provider, deployment_id, version_id, commit_sha, status, url, environment}` from the provider's actual result to a JSON file. `environment` is required and must match the reporter config you pass.
 2. `kanban workflow release CONFIG PROVIDER.json`.
 3. Run the deployed checks with a config of `kind: "deployed"`, `release_version` and `target_url`.
 4. `kanban workflow before-close CONFIG` (exit 3 = pending or rejected events remain; resolve them first), then `update_status` → Shipped with the lease.
@@ -66,6 +82,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 ## Rework, recovery, finish
 
 - `request_rework` (observed/expected/reproduction/classification). Reproduce first with a failing run or `record_reproduction`; old passes never close it.
+- Rejected events: a rejected result is recorded as a blocked run; `before-close` files away rejections nothing waits on and exits 3 only for unresolved ones. Fix the cause and `kanban report requeue EVENT_ID`, or, only with the owner's explicit approval, `kanban report discard EVENT_ID --reason "..."`.
 - Stale claim: `reconcile` with observed commit and `pending_events: 0` (verified), then the owner's `recover_claim`.
 - Finish: `board_overview` for the full phase summary, `project_metrics`, `reconcile`, and report what was saved and what is still blocked.
 

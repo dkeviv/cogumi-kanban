@@ -96,9 +96,9 @@ test('failed and successful releases through the workflow release command (SHP 0
         const lease = { worker: 'w', attempt_id: f.claim.attempt_id, lease_token: f.claim.claim.token };
         await f.go('update_status', { ...lease, status: 'Ready to ship' });
         const provider = path.join(f.dir, 'provider.json');
-        const write = extra => fs.writeFile(provider, JSON.stringify({ provider: 'test-host', deployment_id: 'dep-1', version_id: 'v1', commit_sha: f.source, status: 'failed', url: 'https://app.example.test', ...extra }));
+        const write = extra => fs.writeFile(provider, JSON.stringify({ provider: 'test-host', deployment_id: 'dep-1', version_id: 'v1', commit_sha: f.source, status: 'failed', url: 'https://app.example.test', environment: 'local', ...extra }));
         // Contract violations are refused before anything is recorded.
-        for (const [extra, message] of [[{ url: 'http://app.example.test' }, /HTTPS/], [{ commit_sha: 'b'.repeat(40) }, /exact source/], [{ environment: 'production' }, /contradicts/]]) {
+        for (const [extra, message] of [[{ url: 'http://app.example.test' }, /HTTPS/], [{ commit_sha: 'b'.repeat(40) }, /exact source/], [{ environment: 'production' }, /contradicts/], [{ environment: undefined }, /must state the deployed environment/]]) {
             await write(extra);
             const r = await invoke('scripts/workflow.mjs', ['release', f.cfg, provider], f.repo, f.env);
             assert.equal(r.code, 2);
@@ -138,7 +138,7 @@ test('wrapper records an https artifact reference and refuses other forms (TST 0
         assert.equal((await f.story()).evidence[0].artifact, 'https://ci.example.test/runs/42/trace.zip');
         await f.configure([process.execPath, '-e', "console.log('ok')"], { artifact: '/tmp/trace.zip' });
         const r = await invoke('scripts/test-and-report.mjs', [f.cfg], f.repo, f.env);
-        assert.equal(r.code, 2);
+        assert.equal(r.code, 4, 'never run');
         assert.match(r.err, /artifact must be an https/);
     } finally { await f.cleanup(); }
 });

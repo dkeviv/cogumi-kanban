@@ -23,7 +23,7 @@ Status: **Covered** = implemented and tested. **Verified manually** = exercised 
 | TST 02 proof appropriate to criterion | Engine strict checks, named assertions, labels | completeness; bug-fixes assertions | Covered (what a tracker can enforce) |
 | SHP 01 release gates, source change invalidates | Engine `eligibility`, `set_commit` | engine "changed source…"; review-regressions B05/B09 | Covered |
 | SHP 02 provider release, failed deploy, deployed checks | `scripts/workflow.mjs release`; engine `record_release` | coverage "failed and successful releases…" | Covered |
-| REL 01 outbox, retries, idempotency, quarantine, requeue, heartbeat warning | `scripts/reporting.mjs`, `checkpoint.mjs` | workflow scenarios 5/20/21; review-fixes (rejected → blocked, wrong data root, requeue); recovery locks; scripts B10 | Covered |
+| REL 01 outbox, retries, idempotency, quarantine, settle/requeue/discard, heartbeat warning | `scripts/reporting.mjs`, `checkpoint.mjs`, `workflow.mjs` | workflow scenarios 5/20/21; review-fixes (rejected → blocked, wrong data root, requeue); review-2 (settled rejections, discard, deterministic resolution); recovery locks; scripts B10 | Covered |
 | REL 02 resume and interruption | `checkpoint.mjs resume`; engine `start_session` | workflow "killed wrapper…", "registered before journal crash", "durable snapshot…"; coverage "start_session … known releases" | Covered |
 | REC 01 checkpoint reconciliation, repairs, conflicts | Engine `reconcile`, `checkpoint_attempt`; `workflow before-close` | coverage "reconcile records repairs and conflicts"; review-fixes "before-close exits 3"; completeness | Covered |
 | REC 02 periodic detection | Not implemented | — | Next stage by PRD |
