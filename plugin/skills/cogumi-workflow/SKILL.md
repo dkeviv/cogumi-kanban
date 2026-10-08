@@ -18,13 +18,13 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 
 ## 1. Resolve the project
 
-1. `node <plugin>/scripts/workflow.mjs binding` (the SessionStart hook prints `<plugin>`; or use `/cogumi-claude-kanban:start`).
+1. `sh <plugin>/bin/kanban workflow binding`. `<plugin>` is the plugin directory: the SessionStart hook prints it, and the `workflow` MCP tool returns instructions with it filled in (or use `/cogumi-claude-kanban:start`).
 2. `resolve_project` with that binding. If none matches, `list_projects`; if the user confirms a new project, `create_project` (strict checks default on). If several match, ask.
 3. `board_overview` for a compact view; `get_board` only when full records are needed.
 
 ## 2. Start or resume a session
 
-1. If a reporter config exists for an active attempt: `workflow.mjs observe CONFIG`, then `workflow.mjs resume CONFIG`. Stop if it reports a prior worker still active.
+1. If a reporter config exists for an active attempt: `kanban workflow observe CONFIG`, then `kanban workflow resume CONFIG`. Stop if it reports a prior worker still active. Exit code 3 means rejected events: their runs were recorded as blocked; read the reasons before continuing.
 2. `start_session` with `thread_id` = the Claude session ID from the hook, the observed `binding`, `commit` (`git rev-parse HEAD`) and the actual `pending_events` count from `observe` (0 only after checking). Investigate rejected events before claiming.
 
 ## 3. Plan
@@ -52,16 +52,16 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 
 ## 5. Verify
 
-- `node <plugin>/scripts/workflow.mjs test CONFIG` runs the real command, registers the run, captures output, exit status, commit and dirty state, and delivers evidence through the durable outbox. The check writes `[{check_id,name,result}]` to `$COGUMI_ASSERTION_FILE`.
-- Exit codes: the command's own code on failure, 2 when the check passed but reporting failed (look at `observe`), 0 when passed and recorded.
+- `sh <plugin>/bin/kanban workflow test CONFIG` runs the real command, registers the run, captures output, exit status, commit and dirty state, and delivers evidence through the durable outbox. The check writes `[{check_id,name,result}]` to `$COGUMI_ASSERTION_FILE`.
+- Exit codes: the command's own code on failure, 2 when the check passed but reporting failed (look at `kanban workflow observe`), 0 when passed and recorded.
 - Once functional proof qualifies, `update_status` → Ready to ship (the engine refuses otherwise; read the reasons).
 
 ## 6. Release and close
 
 1. Deploy with the project's real publisher and wait for a terminal status. Save `{provider, deployment_id, version_id, commit_sha, status, url, environment?}` to a JSON file.
-2. `workflow.mjs release CONFIG PROVIDER.json`.
+2. `kanban workflow release CONFIG PROVIDER.json`.
 3. Run the deployed checks with a config of `kind: "deployed"`, `release_version` and `target_url`.
-4. `workflow.mjs before-close CONFIG`, then `update_status` → Shipped with the lease.
+4. `kanban workflow before-close CONFIG` (exit 3 = pending or rejected events remain; resolve them first), then `update_status` → Shipped with the lease.
 
 ## Rework, recovery, finish
 

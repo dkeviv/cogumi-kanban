@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { observeBinding, normalizeOrigin, dataHome, redactCredentials, assertNoCredentials } from '../dist/lib.mjs';
-import { folder, deliver, enqueue, flush, inScope, rejected, redact } from './reporting.mjs';
+import { folder, deliver, enqueue, flush, inScope, rejected, redact, rejection, lastFailure } from './reporting.mjs';
 export { redact };
 
 const ID = /^[A-Za-z0-9_.:-]{1,120}$/;
@@ -67,8 +67,8 @@ async function saveLocal(value) {
     await fs.rename(tmp, file);
 }
 
-// Checkpoints never hold credentials: values are redacted, and a credential *key*
-// (exact denylist, not any key containing "token") is refused.
+// Checkpoints never hold credentials: values are redacted and credential-named keys
+// dropped (see redact), then checked once more.
 function safe(value) {
     const clean = redact(value);
     assertNoCredentials(clean);
@@ -77,35 +77,61 @@ function safe(value) {
 
 const compactRun = r => ({ id: r.id, attempt_id: r.attempt_id, criterion_revision: r.criterion_revision, commit: r.commit, mocked: r.mocked, kind: r.kind, started_at: r.started_at });
 
-function compactJournals(journals, events, attempt, completed = []) {
+// Rejected results are resolved as blocked evidence (resolveRejected), so their large
+// journals never ride along in later checkpoints.
+function compactJournals(journals, events, attempt, completed = [], rejectedIds = new Set()) {
     const pending = new Set(events.map(e => e.args?.evidence?.run_id));
     return journals
-        .filter(j => j.run?.attempt_id === attempt && !completed.includes(j.run.id))
+        .filter(j => j.run?.attempt_id === attempt && !completed.includes(j.run.id) && !rejectedIds.has(j.event_id))
         .map(j => ({ run: compactRun(j.run), state: j.state, pid: j.pid, host: j.host, event_id: j.event_id, ...(j.evidence && !pending.has(j.run.id) ? { evidence: j.evidence } : {}) }));
 }
 
 const scopeOf = cfg => ({ project_id: cfg.project_id, story_id: cfg.story_id, attempt_id: cfg.attempt_id });
+
+function rejectionSummary(list) {
+    return list.length ? `${list.length} rejected event(s): ${list.slice(0, 5).map(r => `${r.event_id} (${r.error})`).join('; ')}` : '';
+}
+
+// A run whose reported result was rejected is closed honestly as blocked, never left
+// unresolved and never treated as passing (PRD REL 02).
+export async function resolveRejected(cfg, run, reason) {
+    try {
+        await enqueue('record_evidence', {
+            project_id: cfg.project_id, story_id: cfg.story_id, event_id: `rejected-${run.id}`,
+            evidence: { run_id: run.id, attempt_id: run.attempt_id, criterion_revision: run.criterion_revision, commit: run.commit, end_commit: run.commit, dirty: true, mocked: run.mocked, result: 'blocked', exit_code: null, error: `Reported result was rejected by the tracker: ${String(reason).slice(0, 500)}; investigate before rerunning`, output: 'Result rejected; see the rejected outbox entry for the original evidence', finished_at: new Date().toISOString() },
+        });
+        return true;
+    } catch (e) {
+        if (e.rejected) return false; // the blocked record itself was refused earlier
+        throw e;
+    }
+}
 
 export async function checkpoint(cfg, stage = 'resume') {
     if (!cfg.attempt_id) throw Error('Reporter configuration requires attempt_id');
     const source = observe(cfg), state = await snapshot(scopeOf(cfg)), local = await loadLocal(cfg);
     const attempt_id = cfg.attempt_id;
     const events = state.events.map(e => ({ action: e.action, args: e.args }));
-    let delivery_error;
-    try { delivery_error = JSON.parse(await fs.readFile(path.join(folder(), '.last-failure'), 'utf8')).error; } catch { /* none */ }
+    const rejectedIds = new Set(state.rejected.map(r => r.event_id));
+    // Rejected events are reported through delivery_error so the board shows them.
+    const delivery_error = [(await lastFailure(scopeOf(cfg)))?.error, rejectionSummary(state.rejected)].filter(Boolean).join(' | ');
     let value = {
         project_id: cfg.project_id, story_id: cfg.story_id, attempt_id, binding: cfg.binding,
         commit: source.commit, dirty: source.dirty, sequence: (local?.sequence || 0) + 1,
         pending_events: events.length, rejected_events: state.rejected.length, events,
-        journals: compactJournals(state.journals, events, attempt_id), stage,
+        journals: compactJournals(state.journals, events, attempt_id, [], rejectedIds), stage,
         ...(delivery_error ? { delivery_error: redactCredentials(delivery_error).slice(0, 1000) } : {}),
     };
     // An approved durable location is written before touching the database, so a
     // checkpoint survives even when the database is unavailable.
     await saveLocal(safe(value));
     const remote = await deliver('restore_checkpoint', { project_id: cfg.project_id, story_id: cfg.story_id, attempt_id }, scopeOf(cfg));
-    value = { ...value, sequence: Math.max(value.sequence, remote.sequence || 0) + 1, journals: compactJournals(state.journals, events, attempt_id, remote.completed_run_ids) };
+    value = { ...value, sequence: Math.max(value.sequence, remote.sequence || 0) + 1, journals: compactJournals(state.journals, events, attempt_id, remote.completed_run_ids, rejectedIds) };
     value = safe(value);
+    // Journals of runs the tracker has completed are no longer needed for recovery.
+    for (const j of state.journals)
+        if (j.run?.attempt_id === attempt_id && remote.completed_run_ids?.includes(j.run.id))
+            await fs.rm(path.join(runsFolder(), `${j.run.id}.json`), { force: true });
     await saveLocal(value);
     // rejected_events is local metadata; the engine's checkpoint schema predates it.
     const { rejected_events: _rejected, ...payload } = value;
@@ -127,10 +153,15 @@ export async function resume(cfg) {
         if (old && JSON.stringify(old) !== JSON.stringify(e)) throw Error('Checkpoint event identity conflict; owner reconciliation required');
         events.set(e.args.event_id, e);
     }
+    const refused = [];
+    const tryEnqueue = async (action, args) => {
+        try { await enqueue(action, args); return true; }
+        catch (e) { if (!e.rejected) throw e; refused.push({ event_id: args.event_id, error: e.rejected.error, run_id: args.evidence?.run_id }); return false; }
+    };
     for (const e of events.values()) {
         if (!inScope(e, scope)) throw Error('Checkpoint event outside configured attempt');
         if (e.args.evidence && remote.completed_run_ids?.includes(e.args.evidence.run_id)) continue;
-        await enqueue(e.action, e.args);
+        await tryEnqueue(e.action, e.args);
     }
     const local = await snapshot(scope), merged = new Map();
     for (const j of [...(remote.unfinished_runs || []).map(run => ({ run, state: 'started' })), ...(remote.journals || []), ...(saved.journals || []), ...local.journals]) {
@@ -154,10 +185,23 @@ export async function resume(cfg) {
                 evidence: { run_id: run.id, attempt_id: run.attempt_id, criterion_revision: run.criterion_revision, commit: run.commit, end_commit: observe(cfg).commit, dirty: true, mocked: run.mocked, result: 'blocked', exit_code: null, error: 'Worker stopped before reporting command outcome; investigate before rerunning', output: 'Interrupted registered run recovered without an asserted outcome', finished_at: new Date().toISOString() },
             });
         } else if (j.state === 'finished' && j.evidence) {
-            await enqueue('record_evidence', { project_id: cfg.project_id, story_id: cfg.story_id, event_id: j.event_id || `recovered-${run.id}`, evidence: j.evidence });
+            const eventId = j.event_id || `recovered-${run.id}`;
+            const earlier = await rejection(eventId);
+            if (earlier) { refused.push({ event_id: eventId, error: earlier.error, run_id: run.id }); continue; }
+            await tryEnqueue('record_evidence', { project_id: cfg.project_id, story_id: cfg.story_id, event_id: eventId, evidence: j.evidence });
         }
     }
-    await flush(scope);
-    if (remote.current_attempt === false) return { ...remote, replayed_history: true };
-    return checkpoint(cfg, 'resume');
+    const runsById = new Map([...merged.values()].map(j => [j.run.id, j.run]));
+    const delivered = await flush(scope);
+    for (const r of delivered.filter(r => r.rejected)) refused.push({ event_id: r.event_id, error: r.rejected, run_id: r.run_id });
+    // Close every run whose result was rejected as blocked, then deliver those records.
+    let resolvedAny = false;
+    for (const r of refused) {
+        const run = runsById.get(r.run_id);
+        if (run && !r.event_id.startsWith('rejected-') && !remote.completed_run_ids?.includes(run.id))
+            resolvedAny = (await resolveRejected(cfg, run, r.error)) || resolvedAny;
+    }
+    if (resolvedAny) await flush(scope);
+    const result = remote.current_attempt === false ? { ...remote, replayed_history: true } : await checkpoint(cfg, 'resume');
+    return { result, rejected: refused };
 }

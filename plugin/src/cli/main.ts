@@ -70,7 +70,8 @@ async function main(argv: string[]) {
                     else throw Error('Choose a project with --project ID (run list_projects to see IDs)');
                 }
                 const html = await renderSnapshot(service, template, projectId!);
-                const out = flag(args, '--out') || path.join(dataHome(), 'snapshots', `board-${projectId}.html`);
+                const safeName = projectId!.replace(/[^A-Za-z0-9_.-]/g, '_');
+                const out = flag(args, '--out') || path.join(dataHome(), 'snapshots', `board-${safeName}.html`);
                 fs.mkdirSync(path.dirname(out), { recursive: true, mode: 0o700 });
                 writeOut(out, html);
                 return;

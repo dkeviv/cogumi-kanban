@@ -5,6 +5,7 @@ import { tools as engineTools } from '../engine/tools.ts';
 import { openStore, isTransient, type Store } from './store.ts';
 import { BOARD_KEY, ownerActor } from './identity.ts';
 import { boardOverview, storyDetail } from './views.ts';
+import { redactValues } from '../engine/checkpoints.ts';
 
 const s = { type: 'string' };
 // Redacted read models for the Artifact board and for compact context in Claude.
@@ -21,10 +22,11 @@ const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 export class KanbanService {
     private store: Store | null = null;
     private file?: string;
-    constructor(file?: string) { this.file = file; }
+    private create: boolean;
+    constructor(file?: string, { create = true } = {}) { this.file = file; this.create = create; }
 
     private db(): Store {
-        if (!this.store) this.store = openStore(this.file);
+        if (!this.store) this.store = openStore(this.file, { create: this.create });
         return this.store;
     }
 
@@ -39,10 +41,13 @@ export class KanbanService {
             const project = await this.call('get_board', { project_id: args.project_id }, actor);
             return action === 'board_overview' ? boardOverview(project, args.phase || undefined) : storyDetail(project, args.story_id);
         }
+        // Every write is redacted before it is stored, whichever caller sent it (PRD
+        // SEC 01): output or commands pasted straight into MCP tools included.
+        const input = readOnlyTools.includes(action) ? args : redactValues(args);
         let lastError: unknown;
         for (let attempt = 0; attempt < 6; attempt++) {
             try {
-                return await runWithDb(this.db(), BOARD_KEY, action, args, actor);
+                return await runWithDb(this.db(), BOARD_KEY, action, input, actor);
             } catch (error) {
                 lastError = error;
                 if (!isTransient(error)) throw error;

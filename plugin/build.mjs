@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 const entries = {
     server: 'src/server/main.ts',
     cli: 'src/cli/main.ts',
-    hook: 'src/hook/session-start.ts',
+    hook: 'src/hook/main.ts',
     lib: 'src/lib.ts',
 };
 for (const [name, entry] of Object.entries(entries)) {

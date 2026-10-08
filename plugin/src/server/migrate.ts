@@ -11,11 +11,20 @@ export function parseExport(data: any): any[] {
     if (!projects || !projects.length) throw Error('Export must be a get_board result, an array of them, or {projects:[...]}');
     for (const p of projects) {
         if (!p || typeof p !== 'object' || typeof p.id !== 'string' || !p.id) throw Error('Every exported project needs an id');
+        // Same identifier rule the engine uses for event and attempt IDs; also keeps IDs
+        // safe to use in file names (snapshots, checkpoints).
+        if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(p.id)) throw Error(`Project id ${JSON.stringify(p.id).slice(0, 60)} is not a valid identifier`);
         if (!Array.isArray(p.stories)) throw Error(`Project ${p.id} has no stories array; export get_board output, not list_projects`);
         if (typeof p.binding !== 'string' && !Array.isArray(p.bindings)) throw Error(`Project ${p.id} has no binding`);
     }
     const ids = projects.map((p: any) => p.id);
     if (new Set(ids).size !== ids.length) throw Error('Export contains the same project twice');
+    const seen = new Map<string, string>();
+    for (const p of projects)
+        for (const b of new Set([...(Array.isArray(p.bindings) ? p.bindings : []), ...(p.binding ? [p.binding] : [])])) {
+            if (seen.has(b as string)) throw Error(`Projects ${seen.get(b as string)} and ${p.id} in the export share binding ${b}`);
+            seen.set(b as string, p.id);
+        }
     return projects;
 }
 

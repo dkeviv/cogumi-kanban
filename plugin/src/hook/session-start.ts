@@ -38,7 +38,7 @@ export async function sessionContext(input: { session_id?: string; cwd?: string 
         return [
             `Cogumi Claude Kanban: this repository is bound to project "${project.name}" (project_id ${project.id}, binding ${binding}).`,
             `Claude session ID for thread_id: ${input.session_id || 'unavailable (use a labeled workspace session identifier)'}.`,
-            `Plugin scripts: node "${path.join(pluginRoot, 'scripts', 'workflow.mjs')}" observe|resume|test|release|before-close CONFIG.`,
+            `Plugin directory (<plugin> in the cogumi-workflow skill): ${pluginRoot}. Scripts: sh "${path.join(pluginRoot, 'bin', 'kanban')}" workflow binding|observe|resume|test|release|before-close CONFIG.`,
             `Outbox for this project: ${pending} pending, ${rejected} rejected event(s)${rejected ? ' — investigate rejected events before claiming work' : ''}.`,
             'Before coding: follow the cogumi-workflow skill — read board_overview, observe/resume, call start_session with the observed commit and pending count, and claim the story before editing code.',
         ].join('\n');
@@ -47,14 +47,9 @@ export async function sessionContext(input: { session_id?: string; cwd?: string 
     }
 }
 
-async function main() {
-    let raw = '';
-    for await (const chunk of process.stdin) raw += chunk;
+export async function runHook(raw: string) {
     let input: any = {};
     try { input = raw ? JSON.parse(raw) : {}; } catch { /* hooks must never block a session */ }
     const context = await sessionContext(input);
-    if (context) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context } }));
+    return context ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context } }) : '';
 }
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]))
-    main().catch(e => { process.stderr.write(`cogumi-claude-kanban hook: ${(e as Error).message}\n`); });

@@ -7,7 +7,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
-import { deliverAsReporter, dataHome, isTransient, redactCredentials } from '../dist/lib.mjs';
+import { deliverAsReporter, dataHome, isTransient, redactCredentials, CREDENTIAL_KEY } from '../dist/lib.mjs';
 
 const pause = ms => new Promise(r => setTimeout(r, ms));
 const EVENT_FILE = /^\d+-.+\.json$/;
@@ -43,7 +43,8 @@ async function locked(dir, fn) {
         if (owner.host !== os.hostname() || !Number.isInteger(owner.pid) || owner.pid <= 0) return false;
         try { process.kill(owner.pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; }
     };
-    for (let i = 0; i < 200; i++) {
+    // Up to ~60 s: another worker's flush may hold the lock while SQLite is busy.
+    for (let i = 0; i < 2400; i++) {
         try {
             await fs.mkdir(lock);
             await fs.writeFile(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, host: os.hostname(), nonce }), { mode: 0o600 });
@@ -78,8 +79,13 @@ async function locked(dir, fn) {
     try {
         return await fn();
     } finally {
-        const owner = JSON.parse(await fs.readFile(path.join(lock, 'owner.json'), 'utf8'));
-        if (owner.nonce === nonce) await fs.rm(lock, { recursive: true });
+        // Never let a missing owner file mask the original error.
+        try {
+            const owner = JSON.parse(await fs.readFile(path.join(lock, 'owner.json'), 'utf8'));
+            if (owner.nonce === nonce) await fs.rm(lock, { recursive: true });
+        } catch (e) {
+            if (e.code !== 'ENOENT' && !(e instanceof SyntaxError)) throw e;
+        }
     }
 }
 
@@ -88,7 +94,7 @@ async function acknowledgment(dir, eventId) {
     catch (e) { if (e.code === 'ENOENT') return null; throw e; }
 }
 
-async function rejection(eventId) {
+export async function rejection(eventId) {
     try {
         for (const name of await fs.readdir(rejectedFolder()))
             if (name.endsWith(`-${eventId}.json`)) return JSON.parse(await fs.readFile(path.join(rejectedFolder(), name), 'utf8'));
@@ -96,12 +102,13 @@ async function rejection(eventId) {
     return null;
 }
 
-// Replaces credential-looking substrings in every string of a JSON value. Applied at
-// enqueue so the outbox, checkpoints and the database all hold the same redacted copy.
+// Replaces credential-looking substrings in every string of a JSON value and drops
+// credential-named keys. Applied at enqueue so the outbox, checkpoints and the database
+// all hold the same redacted copy, and a checkpoint can never be refused for a key.
 export function redact(value) {
     if (typeof value === 'string') return redactCredentials(value);
     if (Array.isArray(value)) return value.map(redact);
-    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redact(v)]));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k]) => !CREDENTIAL_KEY.test(k)).map(([k, v]) => [k, redact(v)]));
     return value;
 }
 
@@ -113,6 +120,9 @@ export async function enqueue(action, args) {
     if (!ID.test(args.event_id)) throw Error('Invalid event ID');
     const dir = folder();
     return locked(dir, async () => {
+        // A rejected event is never silently resent under the same ID; requeue it explicitly.
+        const refused = await rejection(args.event_id);
+        if (refused) throw Object.assign(Error(`Event ${args.event_id} was rejected earlier (${refused.error}); run "report.mjs requeue ${args.event_id}" after fixing the cause`), { rejected: refused });
         const receipt = await acknowledgment(dir, args.event_id);
         if (receipt) {
             if (!samePayload({ action, args }, receipt.event)) throw Error('Event ID reused with different payload');
@@ -187,15 +197,44 @@ export async function flush(scope) {
                     await fs.mkdir(rejectedFolder(), { recursive: true, mode: 0o700 });
                     await atomic(path.join(rejectedFolder(), name), { event, error: e.message, rejected_at: new Date().toISOString() });
                     await fs.unlink(file);
-                    results.push({ event_id: event.args.event_id, rejected: e.message });
+                    results.push({ event_id: event.args.event_id, rejected: e.message, run_id: event.args.evidence?.run_id });
                     continue;
                 }
-                await atomic(path.join(dir, '.last-failure'), { event_id: event.args.event_id, at: new Date().toISOString(), error: e.message });
+                await atomic(path.join(dir, '.last-failure'), { event_id: event.args.event_id, scope: scopeFor(event), at: new Date().toISOString(), error: e.message });
                 throw Error(`Retained ${event.args.event_id}: ${e.message}. Later events were not sent.`);
             }
         }
-        try { await fs.unlink(path.join(dir, '.last-failure')); } catch { /* none */ }
+        // Clear the recorded failure only if its event is no longer waiting in the outbox.
+        const failure = await lastFailure();
+        if (failure && !(await fs.readdir(dir)).some(n => EVENT_FILE.test(n) && n.endsWith(`-${failure.event_id}.json`)))
+            await fs.rm(path.join(dir, '.last-failure'), { force: true });
         return results;
+    });
+}
+
+export async function lastFailure(scope) {
+    try {
+        const failure = JSON.parse(await fs.readFile(path.join(folder(), '.last-failure'), 'utf8'));
+        return !scope || !failure.scope || inScope({ args: failure.scope }, scope) ? failure : null;
+    } catch { return null; }
+}
+
+// Moves rejected events (all, or the named IDs) back into the outbox after the cause
+// has been fixed. Their original order is kept.
+export async function requeue(ids) {
+    const dir = folder();
+    return locked(dir, async () => {
+        const moved = [];
+        let names = [];
+        try { names = (await fs.readdir(rejectedFolder())).filter(n => EVENT_FILE.test(n)).sort(); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        for (const name of names) {
+            const record = JSON.parse(await fs.readFile(path.join(rejectedFolder(), name), 'utf8'));
+            if (ids?.length && !ids.includes(record.event.args.event_id)) continue;
+            await atomic(path.join(dir, name), record.event);
+            await fs.unlink(path.join(rejectedFolder(), name));
+            moved.push(record.event.args.event_id);
+        }
+        return moved;
     });
 }
 

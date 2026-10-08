@@ -4050,10 +4050,27 @@ var coerce = {
 var NEVER = INVALID;
 
 // src/engine/checkpoints.ts
-var CREDENTIAL_KEY = /^(?:token|tokens|lease_token|access_token|refresh_token|id_token|auth_token|api_key|apikey|password|passwd|secret|client_secret|authorization|cookie|set-cookie|private_key)$/i;
-var CREDENTIAL_VALUE = /(?:cgk_[a-f0-9-]{72}|Bearer\s+[A-Za-z0-9._~+/=-]{8,}|sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})/;
+var CREDENTIAL_KEY = /(?:^|[_-])(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret)$|^(?:authorization|cookie|set-cookie|apikey)$/i;
+var CREDENTIAL_VALUE = new RegExp([
+  "cgk_[a-f0-9-]{72}",
+  "(?:Bearer|Basic)\\s+[A-Za-z0-9._~+/=-]{8,}",
+  "sk-[A-Za-z0-9_-]{16,}",
+  "gh[pousr]_[A-Za-z0-9]{20,}",
+  "github_pat_[A-Za-z0-9_]{20,}",
+  "xox[abpr]-[A-Za-z0-9-]{10,}",
+  "AKIA[0-9A-Z]{16}",
+  "AIza[0-9A-Za-z_-]{30,}",
+  "eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}",
+  "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
+].join("|"));
 function redactCredentials(text) {
   return text.replace(new RegExp(CREDENTIAL_VALUE.source, "g"), "[redacted]");
+}
+function redactValues(value) {
+  if (typeof value === "string") return redactCredentials(value);
+  if (Array.isArray(value)) return value.map(redactValues);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValues(v)]));
+  return value;
 }
 function assertNoCredentials(value) {
   const walk = (v) => {
@@ -4075,17 +4092,17 @@ var workflowGuide = `You are using Cogumi Claude Kanban, the project delivery wo
 
 INTAKE: For an informal request, extract the user's goal, included/excluded scope, one small story or useful epic groups, and observable acceptance criteria. Use propose_intake to retain the original request, goal, stable story IDs and version. Show the proposal. Respect approval already given in the conversation; decide_intake records the decision without asking again for unchanged authorized work. Ambiguous/additional work remains a proposal outside execution. For existing requirements, use revise_story with the original request and rationale; do not silently add scope. No separate coach or extra LLM service is needed.
 
-SETUP: Observe the repository identity with "node <plugin>/scripts/workflow.mjs binding" (normalized git origin URL, or local:<git common directory> when there is no origin; all worktrees share it). Resolve it with resolve_project; ask the user to choose if ambiguous, never guess from a title. create_project only if genuinely new. The binding-to-project mapping lives only in the tracker; write nothing into the product checkout. add_binding explicitly associates additional repositories, not branches/worktrees. Use the Claude session ID (given by the SessionStart hook) as thread_id with associate_thread/start_session; if unavailable, use a clearly labeled stable workspace session identifier. Reporter configuration files are non-secret and live outside product source. Never put credentials in chat, source, config, checkpoints or the tracker.
+SETUP: Observe the repository identity with "sh <plugin>/bin/kanban workflow binding" (normalized git origin URL, or local:<git common directory> when there is no origin; all worktrees share it). Resolve it with resolve_project; ask the user to choose if ambiguous, never guess from a title. create_project only if genuinely new. The binding-to-project mapping lives only in the tracker; write nothing into the product checkout. add_binding explicitly associates additional repositories, not branches/worktrees. Use the Claude session ID (given by the SessionStart hook) as thread_id with associate_thread/start_session; if unavailable, use a clearly labeled stable workspace session identifier. Reporter configuration files are non-secret and live outside product source. Never put credentials in chat, source, config, checkpoints or the tracker.
 
 OWNER TOOLS: Tools described as OWNER change scope or authority (approve_scope, waive_criterion, exclude_*, approve_proposal, decide_intake, recover_claim, configure_workflow, classify_rework, resolve_rework_scope, add_binding, set_requirements). Call them only after the user has explicitly approved that decision in this conversation, and quote the approval in the reason.
 
-START/RESUME: Read get_board (or board_overview for a compact view) and workflow. Run "node <plugin>/scripts/workflow.mjs observe CONFIG" to inspect actual binding, current commit, dirty state, outbox, rejected events and run logs. Recover reports with "resume CONFIG" when an active reporter attempt exists; if a prior run is still active, stop recovery. Unknown prior worker state requires verified interruption. Inspect known provider releases before redeploying. Call start_session with observed binding, commit, session ID and the actual pending count; unresolved or rejected reports and conflicts must be investigated. Do not turn a missing signal into success.
+START/RESUME: Read get_board (or board_overview for a compact view) and workflow. Run "sh <plugin>/bin/kanban workflow observe CONFIG" to inspect actual binding, current commit, dirty state, outbox, rejected events and run logs. Recover reports with "resume CONFIG" when an active reporter attempt exists; if a prior run is still active, stop recovery. Unknown prior worker state requires verified interruption. Inspect known provider releases before redeploying. Call start_session with observed binding, commit, session ID and the actual pending count; unresolved or rejected reports and conflicts must be investigated. Do not turn a missing signal into success.
 
 PLAN/CLAIM: Register the full source inventory with set_requirements, including unmapped requirements. Preview imports before writing ambiguous changes. Configure strict_checks=true; legacy evidence needs review before requalification. Each criterion needs type, expected outcome, evidence_requirement and reviewed checks: stable check ID, functional/deployed kind, exact command and named observable assertions. Review assertions for actual behavior; successful build/lint or a screenshot is not functionality. The owner approves explicit phases/environments; tracker operations do not grant new coding/deployment authority. Ready requires reviewed scope/plans/dependencies. next_story selects eligible priority work. Claim BEFORE coding, with binding, worker, branch/checkout, exact starting commit and acceptance plan. Keep the returned attempt ID and lease token for this session's tool calls only. Continue only within the approved scope.
 
-VERIFY: Record the exact candidate commit with set_commit. Use "node <plugin>/scripts/workflow.mjs test CONFIG", which executes the command, registers the run, saves a started checkpoint, heartbeats the lease, records failures/signals/dirty/source drift and queues results in the durable outbox before delivery. check_ids must match the reviewed command and criteria. Actual check code writes [{check_id,name,result}] to the assertion file given in COGUMI_ASSERTION_FILE; never fabricate outcomes from an exit code. Label model/human evaluations separately; their judgments are not deterministic guarantees. Failed/incomplete checks block completion. Outbox replay uses stable event IDs; permanently rejected events are moved aside visibly and must be investigated. Checkpoint files are credential-free. For recovery from loss of the local data directory, configure COGUMI_CHECKPOINT_DIR on separate durable storage. No system can preserve a result that exists only in destroyed local files.
+VERIFY: Record the exact candidate commit with set_commit. Use "sh <plugin>/bin/kanban workflow test CONFIG", which executes the command, registers the run, saves a started checkpoint, heartbeats the lease, records failures/signals/dirty/source drift and queues results in the durable outbox before delivery. check_ids must match the reviewed command and criteria. Actual check code writes [{check_id,name,result}] to the assertion file given in COGUMI_ASSERTION_FILE; never fabricate outcomes from an exit code. Label model/human evaluations separately; their judgments are not deterministic guarantees. Failed/incomplete checks block completion. Outbox replay uses stable event IDs; permanently rejected events are moved aside visibly, the affected run is recorded as blocked, and the cause must be investigated ("kanban report requeue" resends after a fix). Checkpoint files are credential-free. For recovery from loss of the local data directory, configure COGUMI_CHECKPOINT_DIR on separate durable storage. No system can preserve a result that exists only in destroyed local files.
 
-RELEASE: Use the project's actual supported publisher. Wait for terminal provider status. Save its actual provider/deployment_id/version_id/commit_sha/status/observed HTTPS url fields to a JSON file and run "node <plugin>/scripts/workflow.mjs release CONFIG PROVIDER_RESULT.json". Never invent URLs or claim provider integration that was not tested. Run prescribed deployed checks targeting that exact version/environment/URL; include the target URL in the command's real assertions. Run "before-close CONFIG", then update_status Shipped with the current lease. Strict projects require a fresh before-close reconciliation. Installing a tracker never authorizes deployment.
+RELEASE: Use the project's actual supported publisher. Wait for terminal provider status. Save its actual provider/deployment_id/version_id/commit_sha/status/observed HTTPS url fields to a JSON file and run "sh <plugin>/bin/kanban workflow release CONFIG PROVIDER_RESULT.json". Never invent URLs or claim provider integration that was not tested. Run prescribed deployed checks targeting that exact version/environment/URL; include the target URL in the command's real assertions. Run "before-close CONFIG", then update_status Shipped with the current lease. Strict projects require a fresh before-close reconciliation. Installing a tracker never authorizes deployment.
 
 REWORK: request_rework retains observed/expected behavior, reproduction and classification. Unmet/regression work reopens with a corrective relation; new scope becomes a separate linked Draft proposal and original completeness stays challenged until the owner resolves classification. For reproducible defects record a failing automated run before fixing, or record_reproduction with honest manual evidence/blocker. New attempt/revision/commit/release proof is required; old passes cannot close it. If the human still reports incompleteness, reopen it even if tests pass. Only the owner resolves or excludes scope.
 
@@ -4969,25 +4986,23 @@ function assertNodeVersion(version = process.versions.node) {
   if (major < 22 || major === 22 && minor < 13)
     throw Error(`Cogumi Claude Kanban requires Node.js 22.13 or newer (found ${version})`);
 }
-function openStore(file = databasePath()) {
+function openStore(file = databasePath(), { create = true } = {}) {
   assertNodeVersion();
   if (file !== ":memory:") {
+    if (!create && !fs.existsSync(file))
+      throw Object.assign(new Error(`Tracker database not found at ${file}; check COGUMI_KANBAN_HOME/COGUMI_KANBAN_DB`), { code: "COGUMI_UNAVAILABLE" });
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 448 });
     if (!fs.existsSync(file))
       fs.closeSync(fs.openSync(file, "a", 384));
     fs.chmodSync(file, 384);
   }
   const sql = new DatabaseSync(file);
-  sql.exec("PRAGMA busy_timeout=5000");
-  if (file !== ":memory:")
-    sql.exec("PRAGMA journal_mode=WAL");
-  sql.exec(`CREATE TABLE IF NOT EXISTS boards(owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-  const version = sql.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
-  if (!version)
-    sql.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
-  else if (Number(version.value) > SCHEMA_VERSION)
-    throw Error(`Database schema ${version.value} is newer than this plugin supports (${SCHEMA_VERSION}); update the plugin`);
+  try {
+    prepareSchema(sql, file);
+  } catch (e) {
+    sql.close();
+    throw e;
+  }
   return {
     file,
     close: () => sql.close(),
@@ -5010,12 +5025,25 @@ function openStore(file = databasePath()) {
     }
   };
 }
+function prepareSchema(sql, file) {
+  sql.exec("PRAGMA busy_timeout=5000");
+  if (file !== ":memory:")
+    sql.exec("PRAGMA journal_mode=WAL");
+  sql.exec(`CREATE TABLE IF NOT EXISTS boards(owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+  const version = sql.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
+  if (!version)
+    sql.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
+  else if (Number(version.value) > SCHEMA_VERSION)
+    throw Error(`Database schema ${version.value} is newer than this plugin supports (${SCHEMA_VERSION}); update the plugin`);
+}
 var TRANSIENT_SQLITE = /* @__PURE__ */ new Set([5, 6, 10, 13, 14]);
+var TRANSIENT_EXTENDED = /* @__PURE__ */ new Set([264, 520]);
 function isTransient(error) {
   const e = error;
-  if (typeof e?.errcode === "number" && TRANSIENT_SQLITE.has(e.errcode & 255))
+  if (typeof e?.errcode === "number" && (TRANSIENT_SQLITE.has(e.errcode & 255) || TRANSIENT_EXTENDED.has(e.errcode)))
     return true;
-  if (["ENOENT", "EACCES", "EPERM", "EBUSY", "EMFILE", "ENOSPC"].includes(e?.code))
+  if (["ENOENT", "EBUSY", "EMFILE", "ENFILE", "ENOSPC", "COGUMI_UNAVAILABLE"].includes(e?.code))
     return true;
   return /^Concurrent (update|initialization)/.test(String(e?.message || ""));
 }
@@ -5074,6 +5102,9 @@ function card(project, s3) {
   };
 }
 function boardOverview(project, phase) {
+  return redactValues(overview(project, phase));
+}
+function overview(project, phase) {
   const stories = project.stories.filter((s3) => !phase || s3.phase === phase);
   return {
     generated_at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -5088,6 +5119,9 @@ function boardOverview(project, phase) {
   };
 }
 function storyDetail(project, storyId) {
+  return redactValues(detail(project, storyId));
+}
+function detail(project, storyId) {
   const s3 = project.stories.find((x) => x.id === storyId);
   if (!s3) throw Error("Story not found");
   return {
@@ -5122,11 +5156,13 @@ var pause = (ms) => new Promise((r) => setTimeout(r, ms));
 var KanbanService = class {
   store = null;
   file;
-  constructor(file) {
+  create;
+  constructor(file, { create = true } = {}) {
     this.file = file;
+    this.create = create;
   }
   db() {
-    if (!this.store) this.store = openStore(this.file);
+    if (!this.store) this.store = openStore(this.file, { create: this.create });
     return this.store;
   }
   close() {
@@ -5142,10 +5178,11 @@ var KanbanService = class {
       const project = await this.call("get_board", { project_id: args.project_id }, actor);
       return action === "board_overview" ? boardOverview(project, args.phase || void 0) : storyDetail(project, args.story_id);
     }
+    const input = readOnlyTools.includes(action) ? args : redactValues(args);
     let lastError;
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
-        return await runWithDb(this.db(), BOARD_KEY, action, args, actor);
+        return await runWithDb(this.db(), BOARD_KEY, action, input, actor);
       } catch (error) {
         lastError = error;
         if (!isTransient(error)) throw error;
@@ -5183,7 +5220,7 @@ function scopeOf(args) {
 }
 var shared = null;
 function service() {
-  return shared ||= new KanbanService();
+  return shared ||= new KanbanService(void 0, { create: false });
 }
 function closeReporterService() {
   shared?.close();
@@ -5211,7 +5248,14 @@ async function deliverAsReporter(action, args, scope = scopeOf(args)) {
     throw new PermanentError(e.message);
   }
   try {
-    const project = await service().call("get_board", { project_id: actor.project_id });
+    let project;
+    try {
+      project = await service().call("get_board", { project_id: actor.project_id });
+    } catch (e) {
+      if (/^Project not found/.test(e.message))
+        throw Object.assign(new Error(`Project ${actor.project_id} not found in this tracker database; check COGUMI_KANBAN_HOME`), { code: "COGUMI_UNAVAILABLE" });
+      throw e;
+    }
     const story2 = project.stories.find((s3) => s3.id === actor.story_id);
     if (!story2) throw new PermanentError("Reporter story not found");
     if (!(story2.attempts || []).some((a) => a.id === actor.attempt_id))
@@ -5229,13 +5273,14 @@ import fs3 from "node:fs";
 import path2 from "node:path";
 function normalizeOrigin(url) {
   let u = url.trim();
-  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/.exec(u);
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):\/?(?!\/)(.+)$/.exec(u);
   if (scp && !/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = `https://${scp[1]}/${scp[2]}`;
   try {
     const parsed = new URL(u);
     if (!["http:", "https:", "ssh:", "git:", "git+ssh:", "ssh+git:"].includes(parsed.protocol)) return u.replace(/\/+$/, "").replace(/\.git$/, "");
     const pathname = decodeURIComponent(parsed.pathname).replace(/\/+$/, "").replace(/\.git$/, "").replace(/\/+$/, "");
-    return `https://${parsed.hostname.toLowerCase()}${pathname}`;
+    const port = parsed.port && ["http:", "https:"].includes(parsed.protocol) ? `:${parsed.port}` : "";
+    return `https://${parsed.hostname.toLowerCase()}${port}${pathname}`;
   } catch {
     return u.replace(/\/+$/, "").replace(/\.git$/, "");
   }
@@ -5254,6 +5299,7 @@ function observeBinding(cwd = process.cwd()) {
   return { binding: `local:${fs3.realpathSync(dir)}`, root, origin: null };
 }
 export {
+  CREDENTIAL_KEY,
   PermanentError,
   REPORTER_ACTIONS,
   assertNoCredentials,

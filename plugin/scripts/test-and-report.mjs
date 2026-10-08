@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import { send, enqueue, flush, redact } from './reporting.mjs';
 import { deliverAsReporter } from '../dist/lib.mjs';
-import { checkpoint, observe, runsFolder } from './checkpoint.mjs';
+import { checkpoint, observe, runsFolder, resolveRejected } from './checkpoint.mjs';
 
 const OUTPUT_LIMIT = 8 * 1024 * 1024;
 const git = args => spawnSync('git', args, { encoding: 'utf8' });
@@ -108,20 +108,31 @@ async function main() {
     const safeEvidence = redact(evidence);
     await fs.writeFile(logPath, JSON.stringify({ project_id: cfg.project_id, story_id: cfg.story_id, run, evidence: safeEvidence, event_id, state: 'finished' }), { mode: 0o600 });
     await enqueue('record_evidence', { project_id: cfg.project_id, story_id: cfg.story_id, evidence: safeEvidence, event_id });
+    // Deliver first: a checkpoint problem (for example a lapsed lease) must never stop
+    // the evidence itself from reaching the tracker.
     let reportFailed = false;
     try {
-        await checkpoint(context, 'after_test');
         const delivered = await flush(context);
-        if (delivered.some(r => r.rejected)) { reportFailed = true; for (const r of delivered.filter(r => r.rejected)) console.error(`Rejected ${r.event_id}: ${r.rejected}`); }
-        await checkpoint(context, 'after_test');
+        for (const r of delivered.filter(r => r.rejected)) console.error(`Rejected ${r.event_id}: ${r.rejected}`);
+        const own = delivered.find(r => r.event_id === event_id);
+        if (own?.rejected) {
+            reportFailed = true;
+            if (await resolveRejected(context, run, own.rejected)) await flush(context);
+        }
     } catch (e) {
         console.error(e.message);
         reportFailed = true;
+    }
+    try {
+        await checkpoint(context, 'after_test');
+    } catch (e) {
+        console.error(`Checkpoint not saved: ${e.message}`);
     }
     process.stdout.write(redact(result.stdout || ''));
     process.stderr.write(redact(result.stderr || ''));
     if (result.warnings.length) console.error(result.warnings.map(w => '[cogumi] ' + w).join('\n'));
     const passed = result.status === 0 && !error && evidence.result === 'pass';
+    if (!passed && reportFailed) console.error('[cogumi] The check failed and its result was not recorded; run "workflow.mjs observe" and "resume".');
     process.exitCode = passed ? (reportFailed ? 2 : 0) : (typeof result.status === 'number' && result.status !== 0 ? result.status : 1);
 }
 

@@ -6,14 +6,16 @@ import path from 'node:path';
 
 export function normalizeOrigin(url: string): string {
     let u = url.trim();
-    // scp-like SSH: git@host:owner/repo.git
-    const scp = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/.exec(u);
+    // scp-like SSH: git@host:owner/repo.git (also git@host:/owner/repo)
+    const scp = /^(?:[^@/\s]+@)?([^:/\s]+):\/?(?!\/)(.+)$/.exec(u);
     if (scp && !/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = `https://${scp[1]}/${scp[2]}`;
     try {
         const parsed = new URL(u);
         if (!['http:', 'https:', 'ssh:', 'git:', 'git+ssh:', 'ssh+git:'].includes(parsed.protocol)) return u.replace(/\/+$/, '').replace(/\.git$/, '');
         const pathname = decodeURIComponent(parsed.pathname).replace(/\/+$/, '').replace(/\.git$/, '').replace(/\/+$/, '');
-        return `https://${parsed.hostname.toLowerCase()}${pathname}`;
+        // A non-default web port names a different server; SSH ports do not change the repository.
+        const port = parsed.port && ['http:', 'https:'].includes(parsed.protocol) ? `:${parsed.port}` : '';
+        return `https://${parsed.hostname.toLowerCase()}${port}${pathname}`;
     } catch {
         return u.replace(/\/+$/, '').replace(/\.git$/, '');
     }

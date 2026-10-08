@@ -164,11 +164,19 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
   const when = iso => { if (!iso) return "—"; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(); };
   const ago = ms => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
   const short = c => c ? String(c).slice(0, 10) : "—";
+  const duration = (from, to) => {
+    const ms = Date.parse(to) - Date.parse(from);
+    if (!(ms >= 0)) return "—";
+    return ms < 1000 ? `${ms} ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 60000)} min`;
+  };
   const chipClass = r => ({ pass: "pass", succeeded: "pass", fail: "fail", failed: "fail", blocked: "blocked", pending: "pending", waived: "waived" })[r] || "";
 
   const snapshotEl = document.getElementById("cogumi-snapshot");
   const snapshot = snapshotEl ? JSON.parse(snapshotEl.textContent) : null;
-  const state = { mcp: null, projects: [], projectId: store.get("project"), overview: null, unwatch: null, lastData: null, renderedKey: null, phase: store.get("phase") || "", epic: "", query: "" };
+  const state = { mcp: null, projects: [], projectId: store.get("project"), overview: null, unwatch: null, lastData: null, renderedKey: null, phase: "", epic: "", query: "", sheetFor: null, sheetSeq: 0, opener: null };
+  // The phase filter is remembered per project; a phase another project lacks never leaks in.
+  const phaseKey = () => "phase:" + state.projectId;
+  state.phase = state.projectId ? store.get(phaseKey()) || "" : "";
 
   function setStatus(kind, text) {
     $("status-dot").className = "dot " + kind;
@@ -230,10 +238,10 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     const cls = ["card", s.status === "Blocked" ? "s-blocked" : "", s.status === "Needs rework" || s.open_rework ? "s-rework" : "", s.status === "Shipped" && s.eligibility.deployed ? "s-ship" : "", s.eligible_next ? "s-next" : ""].join(" ");
     const proof = s.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof") : s.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof") : null;
     return el("button", { class: cls, type: "button", onclick: () => openStory(s.id) },
-      el("div", { class: "row" }, el("span", { class: "mono" }, s.id), el("span", { class: "count" }, "P" + s.priority)),
+      el("span", { class: "row" }, el("span", { class: "mono" }, s.id), el("span", { class: "count" }, "P" + s.priority)),
       el("span", { class: "t" }, s.title),
-      el("div", { class: "sub" }, el("span", {}, s.epic), el("span", {}, s.phase)),
-      el("div", { class: "chips" },
+      el("span", { class: "sub" }, el("span", {}, s.epic), el("span", {}, s.phase)),
+      el("span", { class: "chips" },
         s.eligible_next ? el("span", { class: "chip pending" }, "Next eligible") : null,
         proof,
         s.claim ? el("span", { class: s.claim.expired ? "chip blocked" : "chip" }, (s.claim.expired ? "Stale claim: " : "Claimed: ") + s.claim.worker) : null,
@@ -241,28 +249,43 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
         s.proposal_pending ? el("span", { class: "chip pending" }, "Proposed") : null,
         s.excluded ? el("span", { class: "chip waived" }, "Excluded") : null),
       s.blocker ? el("span", { class: "why" }, s.blocker) : null,
-      el("div", { class: "sub" }, el("span", {}, s.actor ? `${s.last_action || "updated"} by ${s.actor}` : "No activity"), el("span", {}, when(s.updated_at))));
+      el("span", { class: "sub" }, el("span", {}, s.actor ? `${s.last_action || "updated"} by ${s.actor}` : "No activity"), el("span", {}, when(s.updated_at))));
   }
 
   // ---- story detail -------------------------------------------------------
   async function openStory(id, flash) {
     const sheet = $("sheet");
+    const seq = ++state.sheetSeq;
+    if ($("sheet-backdrop").hidden) state.opener = document.activeElement;
+    state.sheetFor = id;
     sheet.replaceChildren(el("p", { class: "muted" }, "Loading proof…"));
     $("sheet-backdrop").hidden = false;
+    document.querySelector(".wrap").inert = true;
     try {
       const d = snapshot ? snapshot.details[id] : await readTool("story_detail", { project_id: state.projectId, story_id: id }, { cache: false });
+      if (seq !== state.sheetSeq) return; // a newer story was opened, or the sheet closed
       if (!d) throw { code: "tool_error", message: "Story not in this snapshot" };
       renderStory(d, flash);
     } catch (e) {
+      if (seq !== state.sheetSeq) return;
       sheet.replaceChildren(sheetHeader(id, ""), el("div", { class: "notice err" }, el("strong", {}, "Proof details unavailable"), el("span", {}, explain(e))));
     }
+    sheet.querySelector("header button")?.focus();
   }
   function sheetHeader(id, title) {
     return el("header", {}, el("div", { class: "title-block" }, el("span", { class: "label mono" }, id), el("h2", { id: "sheet-title" }, title || "Story")), el("button", { type: "button", onclick: closeSheet }, "Close"));
   }
-  function closeSheet() { $("sheet-backdrop").hidden = true; }
+  function closeSheet() {
+    if ($("sheet-backdrop").hidden) return;
+    state.sheetSeq++;
+    state.sheetFor = null;
+    $("sheet-backdrop").hidden = true;
+    document.querySelector(".wrap").inert = false;
+    state.opener?.focus?.();
+  }
   $("sheet-backdrop").addEventListener("click", e => { if (e.target === $("sheet-backdrop")) closeSheet(); });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+  // Escape closes the sheet, except while typing a rework report (it would lose the draft).
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && !e.target.closest?.("form.rework")) closeSheet(); });
 
   function renderStory(d, flash) {
     const sheet = $("sheet");
@@ -292,19 +315,21 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
         }))),
       el("div", { class: "section" }, el("h3", {}, "Verification runs"),
         (d.runs || []).length ? el("div", { class: "table-wrap" }, el("table", {},
-          el("thead", {}, el("tr", {}, ...["Run", "Kind", "Result", "Commit", "Env", "Command", "Finished"].map(h => el("th", {}, h)))),
+          el("thead", {}, el("tr", {}, ...["Run", "Kind", "Result", "Commit", "Env", "Command", "Duration", "Finished"].map(h => el("th", {}, h)))),
           el("tbody", {}, ...d.runs.slice().reverse().map(r => {
             const e = evidenceByRun[r.id];
             return el("tr", {},
               el("td", { class: "mono" }, short(r.id)), el("td", {}, r.kind + (r.mocked ? " (mocked)" : "")),
               el("td", {}, el("span", { class: "chip " + chipClass(e ? e.result : "pending") }, e ? e.result : "pending")),
               el("td", { class: "mono" }, short(r.commit)), el("td", {}, r.environment), el("td", { class: "mono" }, r.command),
+              el("td", { class: "num" }, duration(r.started_at, e?.finished_at)),
               el("td", { class: "num" }, e ? when(e.finished_at) : "—"));
           })))) : el("p", { class: "muted" }, "No registered runs yet.")),
       (d.evidence || []).length ? el("div", { class: "section" }, el("h3", {}, "Latest evidence output"), ...d.evidence.slice(-3).reverse().map(e => el("div", { class: "criterion" },
         el("div", { class: "chips" }, el("span", { class: "chip " + chipClass(e.result) }, e.result), el("span", { class: "chip" }, "exit " + (e.exit_code ?? "none")), e.dirty ? el("span", { class: "chip blocked" }, "dirty tree") : null, e.mocked ? el("span", { class: "chip blocked" }, "mocked") : null, el("span", { class: "chip mono" }, short(e.commit))),
         e.error ? el("span", { class: "why" }, e.error) : null,
         (e.assertions || []).length ? el("div", { class: "chips" }, ...e.assertions.map(a => el("span", { class: "chip " + chipClass(a.result) }, `${a.check_id}: ${a.name}`))) : null,
+        e.artifact ? el("span", {}, "Artifact: ", /^https:\/\//.test(e.artifact) ? el("a", { href: e.artifact, target: "_blank", rel: "noopener" }, e.artifact) : e.artifact) : null,
         e.output ? el("pre", { class: "output" }, e.output) : el("span", { class: "muted" }, "Empty output")))) : null,
       el("div", { class: "section" }, el("h3", {}, "Releases"),
         (d.releases || []).length || d.release ? el("div", { class: "table-wrap" }, el("table", {},
@@ -323,30 +348,35 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
   function reworkForm(d) {
     if (snapshot) return el("p", { class: "muted" }, "This is a snapshot. Report rework from the live board or ask Claude in chat.");
     const msg = el("span", { class: "muted", role: "status" });
+    // One event ID per report: resending after an unclear failure can never file it twice.
+    let eventId = crypto.randomUUID();
     const form = el("form", { class: "rework" },
       el("h3", {}, "Report incomplete behaviour"),
       el("p", { class: "muted", style: "margin:0;font-size:.8rem" }, "Sending withdraws this story's completion and flags its epic. Claude classifies and fixes it with new evidence."),
       el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-reason" }, "Summary"), el("input", { id: "rw-reason", required: true, maxlength: "2000" })),
-      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-observed" }, "What happened"), el("textarea", { id: "rw-observed", maxlength: "4000" })),
-      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-expected" }, "What should happen"), el("textarea", { id: "rw-expected", maxlength: "4000" })),
+      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-observed" }, "What happened"), el("textarea", { id: "rw-observed", required: true, maxlength: "4000" })),
+      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-expected" }, "What should happen"), el("textarea", { id: "rw-expected", required: true, maxlength: "4000" })),
       el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-repro" }, "Steps to reproduce (optional)"), el("textarea", { id: "rw-repro", maxlength: "4000" })),
       el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-class" }, "Kind of problem"), el("select", { id: "rw-class" },
         el("option", { value: "ambiguous" }, "Not sure yet"), el("option", { value: "unmet" }, "Approved requirement not met"), el("option", { value: "regression" }, "Something that worked broke"), el("option", { value: "new_scope" }, "New scope request"))),
       el("div", { class: "form-actions" }, el("button", { class: "primary", type: "submit", id: "rw-submit" }, "Send rework report"), msg));
+    form.addEventListener("input", () => { eventId = crypto.randomUUID(); });
     form.addEventListener("submit", async ev => {
       ev.preventDefault();
       const btn = $("rw-submit");
+      const missing = [["rw-reason", "a summary"], ["rw-observed", "what happened"], ["rw-expected", "what should happen"]].find(([id]) => !$(id).value.trim());
+      if (missing) { msg.textContent = `Add ${missing[1]} before sending.`; $(missing[0]).focus(); return; }
       btn.disabled = true;
       msg.textContent = "Sending…";
-      const args = { project_id: state.projectId, story_id: d.id, event_id: crypto.randomUUID(), reason: $("rw-reason").value.trim(), classification: $("rw-class").value };
+      const args = { project_id: state.projectId, story_id: d.id, event_id: eventId, reason: $("rw-reason").value.trim(), classification: $("rw-class").value };
       for (const [k, id] of [["observed", "rw-observed"], ["expected", "rw-expected"], ["reproduction", "rw-repro"]]) { const v = $(id).value.trim(); if (v) args[k] = v; }
       try {
         await state.mcp.callTool(SERVER, "request_rework", args);
         state.mcp.invalidate(SERVER, "board_overview").catch(() => {});
-        openStory(d.id, "Rework report saved. Completion is withdrawn until corrected work is verified.");
+        if (state.sheetFor === d.id) openStory(d.id, "Rework report saved. Completion is withdrawn until corrected work is verified.");
       } catch (e) {
         // A failed write is outcome-unknown for some codes; never resend automatically.
-        msg.textContent = e?.code === "cancelled" ? "Not sent: the app's confirmation was declined." : `Not confirmed: ${explain(e)} Check the card before sending again.`;
+        msg.textContent = e?.code === "cancelled" ? "Not sent: the app's confirmation was declined." : `Not confirmed: ${explain(e)} Sending again reuses the same report ID, so it cannot be filed twice.`;
         btn.disabled = false;
       }
     });
@@ -382,6 +412,9 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
   function retract() {
     state.overview = null;
     state.renderedKey = null;
+    state.lastData = null;
+    $("project-name").textContent = "Delivery board";
+    $("project-select").replaceChildren();
     $("columns").replaceChildren();
     $("coverage").textContent = "";
     $("epics").replaceChildren(el("div", { class: "epic" }, el("span", { class: "muted" }, "Board data is hidden while the tracker is unavailable.")));
@@ -398,8 +431,9 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
       setStatus("off", "Access refused");
       showNotice("err", "This board cannot read the tracker", explain(e));
     } else if (code === "approval_required") {
+      retract();
       setStatus("stale", "Waiting for approval");
-      showNotice("warn", "Allow the board to read your tracker", el("span", {}, el("button", { type: "button", onclick: () => loadOnce() }, "Allow and load")));
+      showNotice("warn", "Allow the board to read your tracker", el("span", {}, el("button", { type: "button", onclick: () => (state.projects.length ? (renderProjects(), loadOnce()) : start()) }, "Allow and load")));
     } else {
       setStatus("stale", state.lastData ? `Showing data from ${ago(state.lastData)}; refresh failed` : "Refresh failed");
       showNotice("warn", "Latest refresh failed", explain(e));
@@ -408,6 +442,8 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
   function applyOverview(result) {
     const data = result.payload?.result ?? result.payload;
     if (!data || !data.stories) return;
+    if (data.project?.id !== state.projectId) return; // a late answer for a previous project
+    if (state.phase && !data.phases.includes(state.phase)) { state.phase = ""; store.set(phaseKey(), ""); watchBoard(); return; }
     // Re-render only when the records changed, so polling never steals focus or a click.
     const { generated_at: _at, ...records } = data;
     const key = JSON.stringify(records);
@@ -441,15 +477,21 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
       showNotice("warn", "No projects yet", "Ask Claude Code to create or import a project, then refresh.");
       return;
     }
-    if (!state.projects.some(p => p.id === state.projectId)) state.projectId = state.projects[0].id;
+    if (!state.projects.some(p => p.id === state.projectId)) { state.projectId = state.projects[0].id; state.phase = store.get(phaseKey()) || ""; }
     renderProjects();
     watchBoard();
   }
 
   // ---- controls -----------------------------------------------------------
-  $("project-select").addEventListener("change", e => { state.projectId = e.target.value; store.set("project", state.projectId); state.epic = ""; watchBoard(); });
+  $("project-select").addEventListener("change", e => {
+    state.projectId = e.target.value; store.set("project", state.projectId);
+    state.epic = ""; state.phase = store.get(phaseKey()) || "";
+    // Never show the previous project's cards under the new project's name.
+    state.overview = null; $("columns").replaceChildren(); setStatus("stale", "Loading project…");
+    watchBoard();
+  });
   $("phase-select").addEventListener("change", e => {
-    state.phase = e.target.value; store.set("phase", state.phase);
+    state.phase = e.target.value; store.set(phaseKey(), state.phase);
     if (snapshot) { state.overview = snapshot.overviews[state.phase] || snapshot.overviews[""]; renderBoard(); return; }
     watchBoard();
   });

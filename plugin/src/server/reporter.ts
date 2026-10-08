@@ -16,7 +16,7 @@ export function scopeOf(args: any): Partial<Scope> {
 }
 
 let shared: KanbanService | null = null;
-function service() { return shared ||= new KanbanService(); }
+function service() { return shared ||= new KanbanService(undefined, { create: false }); }
 export function closeReporterService() { shared?.close(); shared = null; }
 
 // Test-only outage simulation: when COGUMI_TEST_FAULT_FILE names an existing file
@@ -39,7 +39,16 @@ export async function deliverAsReporter(action: string, args: any, scope: Partia
     let actor;
     try { actor = reporterActor(scope); } catch (e) { throw new PermanentError((e as Error).message); }
     try {
-        const project = await service().call('get_board', { project_id: actor.project_id });
+        let project;
+        try {
+            project = await service().call('get_board', { project_id: actor.project_id });
+        } catch (e) {
+            // An unknown project usually means the script points at a different data root
+            // than the MCP server; keep the event for a later retry instead of rejecting it.
+            if (/^Project not found/.test((e as Error).message))
+                throw Object.assign(new Error(`Project ${actor.project_id} not found in this tracker database; check COGUMI_KANBAN_HOME`), { code: 'COGUMI_UNAVAILABLE' });
+            throw e;
+        }
         const story = project.stories.find((s: any) => s.id === actor.story_id);
         if (!story) throw new PermanentError('Reporter story not found');
         if (!(story.attempts || []).some((a: any) => a.id === actor.attempt_id))

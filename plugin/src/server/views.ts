@@ -1,6 +1,7 @@
 // Compact, credential-free read models for the board Artifact and for Claude's context.
 // get_board returns every evidence output and lease token; these views do not.
 import { states, summary, eligibility } from '../engine/engine.ts';
+import { redactValues } from '../engine/checkpoints.ts';
 
 const clip = (value: unknown, max: number) => typeof value === 'string' && value.length > max ? value.slice(0, max) + `… [${value.length - max} more characters]` : value;
 
@@ -33,7 +34,13 @@ function card(project: any, s: any) {
     };
 }
 
+// Views redact again on the way out, so records stored before redaction existed
+// (for example an imported board) never reach the board page unredacted.
 export function boardOverview(project: any, phase?: string) {
+    return redactValues(overview(project, phase));
+}
+
+function overview(project: any, phase?: string) {
     const stories = project.stories.filter((s: any) => !phase || s.phase === phase);
     return {
         generated_at: new Date().toISOString(),
@@ -49,6 +56,10 @@ export function boardOverview(project: any, phase?: string) {
 }
 
 export function storyDetail(project: any, storyId: string) {
+    return redactValues(detail(project, storyId));
+}
+
+function detail(project: any, storyId: string) {
     const s = project.stories.find((x: any) => x.id === storyId);
     if (!s) throw Error('Story not found');
     return {

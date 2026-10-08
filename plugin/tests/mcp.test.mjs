@@ -16,7 +16,7 @@ test('initialize negotiates the protocol and carries Claude workflow instruction
     assert.equal(r.result.protocolVersion, '2025-06-18');
     assert.equal(r.result.serverInfo.name, 'cogumi-claude-kanban');
     assert.match(r.result.instructions, /Claude Code/);
-    assert.match(r.result.instructions, /\/opt\/plugin\/scripts\/workflow\.mjs/);
+    assert.match(r.result.instructions, /sh \/opt\/plugin\/bin\/kanban workflow/);
     assert.doesNotMatch(r.result.instructions, /Codex|ChatGPT|Sites|<plugin>/);
     const old = await handle(rpc(2, 'initialize', { protocolVersion: '1999-01-01' }));
     assert.equal(old.result.protocolVersion, SUPPORTED_PROTOCOLS[0]);
