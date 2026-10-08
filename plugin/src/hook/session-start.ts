@@ -1,0 +1,60 @@
+// SessionStart hook (PRD WRK 02, PRJ 01). When the working directory resolves to a
+// bound project, give Claude the project, the session ID to use as thread_id, the
+// script path and the outbox state, and remind it to reconcile before coding.
+// Prints nothing for unbound directories so unrelated sessions stay quiet.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { KanbanService } from '../server/service.ts';
+import { observeBinding } from '../server/binding.ts';
+import { dataHome } from '../server/store.ts';
+
+const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function countEvents(dir: string, projectId: string) {
+    try {
+        return fs.readdirSync(dir).filter(n => /^\d+-.+\.json$/.test(n)).filter(n => {
+            try {
+                // Outbox files are events; .rejected files wrap the event with its reason.
+                const record = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
+                return (record.event || record).args?.project_id === projectId;
+            } catch { return false; }
+        }).length;
+    } catch { return 0; }
+}
+
+export async function sessionContext(input: { session_id?: string; cwd?: string }) {
+    let binding: string;
+    try { binding = observeBinding(input.cwd || process.cwd()).binding; } catch { return null; }
+    if (!fs.existsSync(process.env.COGUMI_KANBAN_DB || path.join(dataHome(), 'kanban.db'))) return null;
+    const service = new KanbanService();
+    try {
+        const projects = (await service.call('list_projects')).filter((p: any) => (p.bindings || [p.binding]).includes(binding));
+        if (!projects.length) return null;
+        if (projects.length > 1) return `Cogumi Claude Kanban: binding ${binding} matches ${projects.length} projects; ask the user which project to use before any tracker mutation.`;
+        const project = projects[0];
+        const outbox = process.env.COGUMI_OUTBOX || path.join(dataHome(), 'outbox');
+        const pending = countEvents(outbox, project.id), rejected = countEvents(path.join(outbox, '.rejected'), project.id);
+        return [
+            `Cogumi Claude Kanban: this repository is bound to project "${project.name}" (project_id ${project.id}, binding ${binding}).`,
+            `Claude session ID for thread_id: ${input.session_id || 'unavailable (use a labeled workspace session identifier)'}.`,
+            `Plugin scripts: node "${path.join(pluginRoot, 'scripts', 'workflow.mjs')}" observe|resume|test|release|before-close CONFIG.`,
+            `Outbox for this project: ${pending} pending, ${rejected} rejected event(s)${rejected ? ' — investigate rejected events before claiming work' : ''}.`,
+            'Before coding: follow the cogumi-workflow skill — read board_overview, observe/resume, call start_session with the observed commit and pending count, and claim the story before editing code.',
+        ].join('\n');
+    } finally {
+        service.close();
+    }
+}
+
+async function main() {
+    let raw = '';
+    for await (const chunk of process.stdin) raw += chunk;
+    let input: any = {};
+    try { input = raw ? JSON.parse(raw) : {}; } catch { /* hooks must never block a session */ }
+    const context = await sessionContext(input);
+    if (context) process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context } }));
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]))
+    main().catch(e => { process.stderr.write(`cogumi-claude-kanban hook: ${(e as Error).message}\n`); });

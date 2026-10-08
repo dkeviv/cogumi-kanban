@@ -1,0 +1,481 @@
+<title>Cogumi Claude Kanban</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a proof ledger — summary strip of epic progress, then lifecycle columns
+   that scroll sideways in their own lane, with a detail sheet for one story's proof. */
+:root {
+  --bg: #f5f6f4; --surface: #ffffff; --sunken: #eceeea; --line: #d6dad3;
+  --fg: #1d2420; --muted: #5b655f; --accent: #0f766e; --accent-ink: #ffffff;
+  --pass: #2f7d32; --fail: #b3261e; --blocked: #a15c00; --pending: #5b6abf; --waived: #7a5aa6;
+  --pass-bg: #e3f1e3; --fail-bg: #f8e1df; --blocked-bg: #f7ead6; --pending-bg: #e6e8f7; --waived-bg: #eee6f6;
+  --shadow: 0 1px 2px rgba(20, 30, 25, .08);
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #121614; --surface: #1a201d; --sunken: #0e1210; --line: #2c3530;
+  --fg: #e4e9e5; --muted: #9aa69f; --accent: #2bb3a6; --accent-ink: #06201d;
+  --pass: #7cc47f; --fail: #f08a80; --blocked: #e0a24a; --pending: #9ba6f0; --waived: #b99be0;
+  --pass-bg: #1d3320; --fail-bg: #3a1f1c; --blocked-bg: #3a2c16; --pending-bg: #23284a; --waived-bg: #2e2440;
+  --shadow: none; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #121614; --surface: #1a201d; --sunken: #0e1210; --line: #2c3530;
+  --fg: #e4e9e5; --muted: #9aa69f; --accent: #2bb3a6; --accent-ink: #06201d;
+  --pass: #7cc47f; --fail: #f08a80; --blocked: #e0a24a; --pending: #9ba6f0; --waived: #b99be0;
+  --pass-bg: #1d3320; --fail-bg: #3a1f1c; --blocked-bg: #3a2c16; --pending-bg: #23284a; --waived-bg: #2e2440;
+  --shadow: none; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; line-height: 1.45; margin: 0; }
+.wrap { padding-inline: 16px; padding-block: 16px 32px; max-width: 1600px; margin: 0 auto; display: grid; gap: 16px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h1 { font-size: 1.45rem; letter-spacing: -.01em; }
+h2 { font-size: 1.05rem; }
+.mono { font-family: var(--mono); font-size: .82rem; }
+.muted { color: var(--muted); }
+.label { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600; }
+header.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px; }
+.title-block { display: grid; gap: 2px; min-width: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.field { display: grid; gap: 3px; }
+select, input, textarea, button { font: inherit; color: inherit; }
+select, input, textarea { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; max-width: 100%; }
+textarea { width: 100%; min-height: 64px; resize: vertical; }
+button { cursor: pointer; border-radius: 6px; padding: 6px 12px; border: 1px solid var(--line); background: var(--surface); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .82rem; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.live { background: var(--pass); } .dot.stale { background: var(--blocked); } .dot.off { background: var(--fail); }
+.notice { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; }
+.notice.warn { border-color: var(--blocked); background: var(--blocked-bg); }
+.notice.err { border-color: var(--fail); background: var(--fail-bg); }
+.notice code { font-family: var(--mono); font-size: .82rem; }
+.epics { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.epic { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; min-width: 0; }
+.epic h3 { font-family: var(--body); font-size: .9rem; font-weight: 600; overflow-wrap: anywhere; }
+.bar { height: 6px; background: var(--sunken); border-radius: 3px; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: var(--accent); }
+.epic .meta { display: flex; justify-content: space-between; gap: 8px; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: .72rem; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); background: var(--sunken); color: var(--muted); white-space: nowrap; }
+.chip.pass { color: var(--pass); background: var(--pass-bg); border-color: transparent; }
+.chip.fail { color: var(--fail); background: var(--fail-bg); border-color: transparent; }
+.chip.blocked { color: var(--blocked); background: var(--blocked-bg); border-color: transparent; }
+.chip.pending { color: var(--pending); background: var(--pending-bg); border-color: transparent; }
+.chip.waived { color: var(--waived); background: var(--waived-bg); border-color: transparent; }
+.lane { overflow-x: auto; padding-bottom: 6px; }
+.columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 10px; min-width: min-content; }
+.column { background: var(--sunken); border-radius: 8px; padding: 8px; display: grid; align-content: start; gap: 8px; min-width: 0; }
+.column-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; padding: 2px 4px; }
+.column-head h2 { font-size: .9rem; }
+.count { font-family: var(--mono); font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.card { text-align: left; width: 100%; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 6px; box-shadow: var(--shadow); border-left: 3px solid var(--line); }
+.card:hover { border-color: var(--accent); }
+.card.s-blocked, .card.s-rework { border-left-color: var(--fail); }
+.card.s-ship { border-left-color: var(--pass); }
+.card.s-next { border-left-color: var(--accent); }
+.card .row { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.card .t { font-weight: 600; overflow-wrap: anywhere; }
+.card .sub { font-size: .76rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.card .why { font-size: .76rem; color: var(--blocked); }
+.empty-col { font-size: .78rem; color: var(--muted); padding: 4px; }
+.sheet-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); display: flex; justify-content: flex-end; z-index: 10; }
+.sheet { background: var(--bg); width: min(720px, 100%); height: 100%; overflow-y: auto; padding-inline: 16px; padding-block: calc(16px + env(safe-area-inset-top, 0px)) calc(24px + env(safe-area-inset-bottom, 0px)); display: grid; align-content: start; gap: 14px; border-left: 1px solid var(--line); }
+.sheet header { display: flex; justify-content: space-between; gap: 10px; align-items: start; }
+.section { display: grid; gap: 8px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: .84rem; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.criteria { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.criterion { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 4px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .8rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+td.num { font-variant-numeric: tabular-nums; }
+pre.output { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: .76rem; max-height: 160px; overflow-y: auto; background: var(--sunken); padding: 6px 8px; border-radius: 4px; }
+form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.form-row { display: grid; gap: 3px; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+@media (max-width: 520px) { .kv { grid-template-columns: 1fr; } .kv dt { margin-top: 4px; } }
+@media (prefers-reduced-motion: no-preference) { .card { transition: border-color .12s; } }
+</style>
+<!--COGUMI_SNAPSHOT-->
+
+<div class="wrap">
+  <header class="top">
+    <div class="title-block">
+      <span class="label">Cogumi Claude Kanban</span>
+      <h1 id="project-name">Delivery board</h1>
+      <div class="status" id="status"><span class="dot" id="status-dot"></span><span id="status-text">Connecting to the local tracker…</span></div>
+    </div>
+    <div class="controls">
+      <div class="field"><label class="label" for="project-select">Project</label><select id="project-select"></select></div>
+      <div class="field"><label class="label" for="phase-select">Phase</label><select id="phase-select"><option value="">All phases</option></select></div>
+      <div class="field"><label class="label" for="epic-select">Epic</label><select id="epic-select"><option value="">All epics</option></select></div>
+      <div class="field"><label class="label" for="search">Find</label><input id="search" type="search" placeholder="ID or title"></div>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+
+  <div id="notice" hidden></div>
+
+  <section class="section" aria-labelledby="epics-h">
+    <div class="column-head"><h2 id="epics-h">Epic completion</h2><span class="count" id="coverage"></span></div>
+    <div class="epics" id="epics"><div class="epic"><span class="muted">Epic progress appears here once the board loads. Completion counts every in-scope story for the selected phase; filters never shrink it.</span></div></div>
+  </section>
+
+  <section class="section" aria-labelledby="cards-h">
+    <h2 id="cards-h" class="label">Stories by lifecycle state</h2>
+    <div class="lane"><div class="columns" id="columns"></div></div>
+  </section>
+</div>
+
+<div class="sheet-backdrop" id="sheet-backdrop" hidden>
+  <aside class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title"></aside>
+</div>
+
+<script>
+(() => {
+  // Filled in by /cogumi-claude-kanban:board from this session's tool names.
+  const SERVER = "__COGUMI_MCP_SERVER__";
+  const STATES = ["Draft", "Backlog", "Ready", "Implementing", "Verifying", "Ready to ship", "Shipped", "Blocked", "Needs rework"];
+  const REFETCH_MS = 15000;
+  const $ = id => document.getElementById(id);
+  const el = (tag, attrs = {}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === "class") node.className = v; else if (k.startsWith("on")) node.addEventListener(k.slice(2), v); else node.setAttribute(k, v === true ? "" : v);
+    }
+    for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    return node;
+  };
+  const store = {
+    get(k) { try { return localStorage.getItem("cogumi:" + k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem("cogumi:" + k, v); } catch { /* storage unavailable */ } },
+  };
+  const when = iso => { if (!iso) return "—"; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString(); };
+  const ago = ms => { const s = Math.max(0, Math.round((Date.now() - ms) / 1000)); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`; };
+  const short = c => c ? String(c).slice(0, 10) : "—";
+  const chipClass = r => ({ pass: "pass", succeeded: "pass", fail: "fail", failed: "fail", blocked: "blocked", pending: "pending", waived: "waived" })[r] || "";
+
+  const snapshotEl = document.getElementById("cogumi-snapshot");
+  const snapshot = snapshotEl ? JSON.parse(snapshotEl.textContent) : null;
+  const state = { mcp: null, projects: [], projectId: store.get("project"), overview: null, unwatch: null, lastData: null, renderedKey: null, phase: store.get("phase") || "", epic: "", query: "" };
+
+  function setStatus(kind, text) {
+    $("status-dot").className = "dot " + kind;
+    $("status-text").textContent = text;
+  }
+  function showNotice(kind, title, body) {
+    const n = $("notice");
+    n.replaceChildren();
+    if (!title) { n.hidden = true; return; }
+    n.className = "notice " + kind;
+    n.append(el("strong", {}, title));
+    if (body) n.append(body instanceof Node ? body : el("span", {}, body));
+    n.hidden = false;
+  }
+  const noHost = () => el("span", {}, "This board reads the Cogumi Claude Kanban server on your machine, which only works inside the Claude desktop app with the plugin installed and its server running. For a static copy, run ", el("code", {}, "/cogumi-claude-kanban:snapshot"), " in Claude Code.");
+
+  // ---- rendering ----------------------------------------------------------
+  function renderProjects() {
+    const sel = $("project-select");
+    sel.replaceChildren(...state.projects.map(p => el("option", { value: p.id, selected: p.id === state.projectId }, p.name)));
+    sel.disabled = !!snapshot || state.projects.length < 2;
+  }
+  function fillSelect(id, values, current, allLabel) {
+    const sel = $(id);
+    sel.replaceChildren(el("option", { value: "" }, allLabel), ...values.map(v => el("option", { value: v, selected: v === current }, v)));
+  }
+  function renderBoard() {
+    const ov = state.overview;
+    if (!ov) return;
+    $("project-name").textContent = ov.project.name;
+    fillSelect("phase-select", ov.phases, state.phase, "All phases");
+    fillSelect("epic-select", ov.epics, state.epic, "All epics");
+    const sum = ov.summary || { epics: [], unmapped: [] };
+    $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") : "Requirement coverage not registered";
+    const epics = sum.epics.filter(e => !state.epic || e.epic === state.epic);
+    $("epics").replaceChildren(...(epics.length ? epics.map(e => {
+      const pct = e.total ? Math.round(100 * e.shipped / e.total) : 0;
+      return el("div", { class: "epic" },
+        el("h3", {}, e.epic),
+        el("div", { class: "bar", role: "img", "aria-label": `${e.shipped} of ${e.total} shipped` }, el("span", { style: `width:${pct}%` })),
+        el("div", { class: "meta" }, el("span", {}, `${e.shipped} of ${e.total} shipped`), el("span", { class: e.complete ? "" : "muted" }, e.complete ? "Phase complete" : "Incomplete")),
+        el("div", { class: "chips" },
+          e.unmapped.length ? el("span", { class: "chip fail" }, `${e.unmapped.length} unmapped`) : null,
+          e.unmapped_stories.length ? el("span", { class: "chip blocked" }, `${e.unmapped_stories.length} untraced`) : null,
+          e.proposals.length ? el("span", { class: "chip pending" }, `${e.proposals.length} proposed`) : null,
+          e.excluded.length ? el("span", { class: "chip waived" }, `${e.excluded.length} excluded`) : null),
+        e.remaining.length ? el("div", { class: "muted", style: "font-size:.76rem" }, "Remaining: " + e.remaining.map(r => `${r.id} (${r.status})`).join(", ")) : null);
+    }) : [el("div", { class: "epic" }, el("span", { class: "muted" }, "No stories in this phase yet. Import a plan or propose intake from Claude Code."))]));
+    const q = state.query.toLowerCase();
+    const visible = ov.stories.filter(s => (!state.epic || s.epic === state.epic) && (!q || [s.id, s.title, s.epic].join(" ").toLowerCase().includes(q)));
+    $("columns").replaceChildren(...STATES.map(st => {
+      const cards = visible.filter(s => s.status === st).sort((a, b) => Number(b.eligible_next) - Number(a.eligible_next) || a.priority - b.priority || a.id.localeCompare(b.id));
+      return el("div", { class: "column" },
+        el("div", { class: "column-head" }, el("h2", {}, st), el("span", { class: "count" }, String(cards.length))),
+        ...(cards.length ? cards.map(card) : [el("div", { class: "empty-col" }, "None")]));
+    }));
+  }
+  function card(s) {
+    const cls = ["card", s.status === "Blocked" ? "s-blocked" : "", s.status === "Needs rework" || s.open_rework ? "s-rework" : "", s.status === "Shipped" && s.eligibility.deployed ? "s-ship" : "", s.eligible_next ? "s-next" : ""].join(" ");
+    const proof = s.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof") : s.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof") : null;
+    return el("button", { class: cls, type: "button", onclick: () => openStory(s.id) },
+      el("div", { class: "row" }, el("span", { class: "mono" }, s.id), el("span", { class: "count" }, "P" + s.priority)),
+      el("span", { class: "t" }, s.title),
+      el("div", { class: "sub" }, el("span", {}, s.epic), el("span", {}, s.phase)),
+      el("div", { class: "chips" },
+        s.eligible_next ? el("span", { class: "chip pending" }, "Next eligible") : null,
+        proof,
+        s.claim ? el("span", { class: s.claim.expired ? "chip blocked" : "chip" }, (s.claim.expired ? "Stale claim: " : "Claimed: ") + s.claim.worker) : null,
+        s.open_rework ? el("span", { class: "chip fail" }, `${s.open_rework} rework`) : null,
+        s.proposal_pending ? el("span", { class: "chip pending" }, "Proposed") : null,
+        s.excluded ? el("span", { class: "chip waived" }, "Excluded") : null),
+      s.blocker ? el("span", { class: "why" }, s.blocker) : null,
+      el("div", { class: "sub" }, el("span", {}, s.actor ? `${s.last_action || "updated"} by ${s.actor}` : "No activity"), el("span", {}, when(s.updated_at))));
+  }
+
+  // ---- story detail -------------------------------------------------------
+  async function openStory(id, flash) {
+    const sheet = $("sheet");
+    sheet.replaceChildren(el("p", { class: "muted" }, "Loading proof…"));
+    $("sheet-backdrop").hidden = false;
+    try {
+      const d = snapshot ? snapshot.details[id] : await readTool("story_detail", { project_id: state.projectId, story_id: id }, { cache: false });
+      if (!d) throw { code: "tool_error", message: "Story not in this snapshot" };
+      renderStory(d, flash);
+    } catch (e) {
+      sheet.replaceChildren(sheetHeader(id, ""), el("div", { class: "notice err" }, el("strong", {}, "Proof details unavailable"), el("span", {}, explain(e))));
+    }
+  }
+  function sheetHeader(id, title) {
+    return el("header", {}, el("div", { class: "title-block" }, el("span", { class: "label mono" }, id), el("h2", { id: "sheet-title" }, title || "Story")), el("button", { type: "button", onclick: closeSheet }, "Close"));
+  }
+  function closeSheet() { $("sheet-backdrop").hidden = true; }
+  $("sheet-backdrop").addEventListener("click", e => { if (e.target === $("sheet-backdrop")) closeSheet(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeSheet(); });
+
+  function renderStory(d, flash) {
+    const sheet = $("sheet");
+    const evidenceByRun = Object.fromEntries((d.evidence || []).map(e => [e.run_id, e]));
+    const parts = [
+      sheetHeader(d.id, d.title),
+      flash ? el("div", { class: "notice", role: "status" }, el("strong", {}, flash)) : null,
+      el("div", { class: "chips" }, el("span", { class: "chip" }, d.status), el("span", { class: "chip" }, d.epic), el("span", { class: "chip" }, d.phase), d.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof qualifies") : el("span", { class: "chip fail" }, "Functional proof missing"), d.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof qualifies") : el("span", { class: "chip fail" }, "Deployed proof missing")),
+      d.eligibility.reasons.length ? el("div", { class: "notice warn" }, el("strong", {}, "Why this is not complete"), el("span", {}, d.eligibility.reasons.join(" · "))) : null,
+      el("dl", { class: "kv" },
+        el("dt", {}, "Candidate commit"), el("dd", { class: "mono" }, d.commit || "—"),
+        el("dt", {}, "Attempt"), el("dd", { class: "mono" }, d.attempt_id || "—"),
+        el("dt", {}, "Claim"), el("dd", {}, d.claim ? `${d.claim.worker}, ${d.claim.expired ? "expired" : "expires"} ${when(d.claim.expires)}` : "Unclaimed"),
+        el("dt", {}, "Criterion revision"), el("dd", {}, String(d.revision ?? "—")),
+        el("dt", {}, "Source"), el("dd", {}, [d.source_path, d.source_revision].filter(Boolean).join(" @ ") || "—"),
+        el("dt", {}, "Requirements"), el("dd", {}, (d.requirement_ids || []).join(", ") || "—")),
+      el("div", { class: "section" }, el("h3", {}, "Acceptance criteria"),
+        el("ol", { class: "criteria" }, ...d.criteria.map((c, i) => {
+          const plan = (d.proof_plan || [])[i];
+          const waived = (d.waivers || []).filter(w => w.criterion_index === i && w.criterion_revision === d.revision);
+          const runs = (d.runs || []).filter(r => (r.criteria || []).includes(i));
+          const latest = runs.at(-1), ev = latest && evidenceByRun[latest.id];
+          const result = waived.length ? "waived" : ev ? ev.result : latest ? "pending" : null;
+          return el("li", { class: "criterion" },
+            el("div", { class: "row", style: "display:flex;justify-content:space-between;gap:8px" }, el("span", {}, `${i + 1}. ${c}`), result ? el("span", { class: "chip " + chipClass(result) }, result === "waived" ? "Authorized waiver" : result) : el("span", { class: "chip" }, "No run")),
+            plan ? el("span", { class: "muted", style: "font-size:.78rem" }, `${plan.type}: ${plan.expected}${plan.checks?.length ? ` · checks ${plan.checks.map(c => c.id).join(", ")}` : ""}`) : el("span", { class: "why" }, "No proof plan"));
+        }))),
+      el("div", { class: "section" }, el("h3", {}, "Verification runs"),
+        (d.runs || []).length ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, ...["Run", "Kind", "Result", "Commit", "Env", "Command", "Finished"].map(h => el("th", {}, h)))),
+          el("tbody", {}, ...d.runs.slice().reverse().map(r => {
+            const e = evidenceByRun[r.id];
+            return el("tr", {},
+              el("td", { class: "mono" }, short(r.id)), el("td", {}, r.kind + (r.mocked ? " (mocked)" : "")),
+              el("td", {}, el("span", { class: "chip " + chipClass(e ? e.result : "pending") }, e ? e.result : "pending")),
+              el("td", { class: "mono" }, short(r.commit)), el("td", {}, r.environment), el("td", { class: "mono" }, r.command),
+              el("td", { class: "num" }, e ? when(e.finished_at) : "—"));
+          })))) : el("p", { class: "muted" }, "No registered runs yet.")),
+      (d.evidence || []).length ? el("div", { class: "section" }, el("h3", {}, "Latest evidence output"), ...d.evidence.slice(-3).reverse().map(e => el("div", { class: "criterion" },
+        el("div", { class: "chips" }, el("span", { class: "chip " + chipClass(e.result) }, e.result), el("span", { class: "chip" }, "exit " + (e.exit_code ?? "none")), e.dirty ? el("span", { class: "chip blocked" }, "dirty tree") : null, e.mocked ? el("span", { class: "chip blocked" }, "mocked") : null, el("span", { class: "chip mono" }, short(e.commit))),
+        e.error ? el("span", { class: "why" }, e.error) : null,
+        (e.assertions || []).length ? el("div", { class: "chips" }, ...e.assertions.map(a => el("span", { class: "chip " + chipClass(a.result) }, `${a.check_id}: ${a.name}`))) : null,
+        e.output ? el("pre", { class: "output" }, e.output) : el("span", { class: "muted" }, "Empty output")))) : null,
+      el("div", { class: "section" }, el("h3", {}, "Releases"),
+        (d.releases || []).length || d.release ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, ...["Version", "Result", "Environment", "Commit", "URL"].map(h => el("th", {}, h)))),
+          el("tbody", {}, ...((d.releases || []).length ? d.releases : [d.release]).slice().reverse().map(r => el("tr", {},
+            el("td", { class: "mono" }, r.version), el("td", {}, el("span", { class: "chip " + chipClass(r.result) }, r.result)), el("td", {}, r.environment), el("td", { class: "mono" }, short(r.commit)),
+            el("td", {}, /^https:\/\//.test(r.url || "") ? el("a", { href: r.url, target: "_blank", rel: "noopener" }, r.url) : r.url || "—")))))) : el("p", { class: "muted" }, "No release recorded.")),
+      (d.rework || []).length ? el("div", { class: "section" }, el("h3", {}, "Rework reports"), ...d.rework.map(r => el("div", { class: "criterion" },
+        el("div", { class: "chips" }, el("span", { class: "chip fail" }, r.classification || "unclassified"), el("span", { class: "chip" }, when(r.at))),
+        el("span", {}, r.reason || ""), r.observed ? el("span", { class: "muted" }, "Observed: " + r.observed) : null, r.expected ? el("span", { class: "muted" }, "Expected: " + r.expected) : null))) : null,
+      reworkForm(d),
+    ];
+    sheet.replaceChildren(...parts.filter(Boolean));
+  }
+
+  function reworkForm(d) {
+    if (snapshot) return el("p", { class: "muted" }, "This is a snapshot. Report rework from the live board or ask Claude in chat.");
+    const msg = el("span", { class: "muted", role: "status" });
+    const form = el("form", { class: "rework" },
+      el("h3", {}, "Report incomplete behaviour"),
+      el("p", { class: "muted", style: "margin:0;font-size:.8rem" }, "Sending withdraws this story's completion and flags its epic. Claude classifies and fixes it with new evidence."),
+      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-reason" }, "Summary"), el("input", { id: "rw-reason", required: true, maxlength: "2000" })),
+      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-observed" }, "What happened"), el("textarea", { id: "rw-observed", maxlength: "4000" })),
+      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-expected" }, "What should happen"), el("textarea", { id: "rw-expected", maxlength: "4000" })),
+      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-repro" }, "Steps to reproduce (optional)"), el("textarea", { id: "rw-repro", maxlength: "4000" })),
+      el("div", { class: "form-row" }, el("label", { class: "label", for: "rw-class" }, "Kind of problem"), el("select", { id: "rw-class" },
+        el("option", { value: "ambiguous" }, "Not sure yet"), el("option", { value: "unmet" }, "Approved requirement not met"), el("option", { value: "regression" }, "Something that worked broke"), el("option", { value: "new_scope" }, "New scope request"))),
+      el("div", { class: "form-actions" }, el("button", { class: "primary", type: "submit", id: "rw-submit" }, "Send rework report"), msg));
+    form.addEventListener("submit", async ev => {
+      ev.preventDefault();
+      const btn = $("rw-submit");
+      btn.disabled = true;
+      msg.textContent = "Sending…";
+      const args = { project_id: state.projectId, story_id: d.id, event_id: crypto.randomUUID(), reason: $("rw-reason").value.trim(), classification: $("rw-class").value };
+      for (const [k, id] of [["observed", "rw-observed"], ["expected", "rw-expected"], ["reproduction", "rw-repro"]]) { const v = $(id).value.trim(); if (v) args[k] = v; }
+      try {
+        await state.mcp.callTool(SERVER, "request_rework", args);
+        state.mcp.invalidate(SERVER, "board_overview").catch(() => {});
+        openStory(d.id, "Rework report saved. Completion is withdrawn until corrected work is verified.");
+      } catch (e) {
+        // A failed write is outcome-unknown for some codes; never resend automatically.
+        msg.textContent = e?.code === "cancelled" ? "Not sent: the app's confirmation was declined." : `Not confirmed: ${explain(e)} Check the card before sending again.`;
+        btn.disabled = false;
+      }
+    });
+    return form;
+  }
+
+  // ---- data ---------------------------------------------------------------
+  function explain(e) {
+    switch (e?.code) {
+      case "server_not_connected": return "The local tracker is not reachable from this view.";
+      case "not_in_manifest": return "This board is not allowed to use that tracker tool. Republish it with /cogumi-claude-kanban:board.";
+      case "approval_required": return "The Claude app needs your approval for this request.";
+      case "server_unavailable": return "The local tracker did not answer in time.";
+      case "tool_error": return e.message || "The tracker refused the request.";
+      case "not_granted": case "capability_disabled": case "capability_removed": return "Live data is not available in this view.";
+      default: return e?.message || "Unexpected error.";
+    }
+  }
+  async function readTool(tool, input, opts) {
+    try {
+      const r = await state.mcp.callTool(SERVER, tool, input, opts);
+      return r.payload?.result ?? r.payload;
+    } catch (e) {
+      if (e?.retryable) {
+        await new Promise(res => setTimeout(res, e.retryAfterMs || 500 + Math.random() * 500));
+        const r = await state.mcp.callTool(SERVER, tool, input, opts);
+        return r.payload?.result ?? r.payload;
+      }
+      throw e;
+    }
+  }
+  // Connection and access failures withdraw every rendered record, not just the cards.
+  function retract() {
+    state.overview = null;
+    state.renderedKey = null;
+    $("columns").replaceChildren();
+    $("coverage").textContent = "";
+    $("epics").replaceChildren(el("div", { class: "epic" }, el("span", { class: "muted" }, "Board data is hidden while the tracker is unavailable.")));
+    closeSheet();
+  }
+  function handleError(e) {
+    const code = e?.code;
+    if (["server_not_connected", "not_granted", "capability_disabled", "capability_removed"].includes(code)) {
+      retract();
+      setStatus("off", "Not connected to the local tracker");
+      showNotice("err", "The live board is not connected", noHost());
+    } else if (["needs_reauth", "blocked_by_policy", "not_in_manifest"].includes(code)) {
+      retract();
+      setStatus("off", "Access refused");
+      showNotice("err", "This board cannot read the tracker", explain(e));
+    } else if (code === "approval_required") {
+      setStatus("stale", "Waiting for approval");
+      showNotice("warn", "Allow the board to read your tracker", el("span", {}, el("button", { type: "button", onclick: () => loadOnce() }, "Allow and load")));
+    } else {
+      setStatus("stale", state.lastData ? `Showing data from ${ago(state.lastData)}; refresh failed` : "Refresh failed");
+      showNotice("warn", "Latest refresh failed", explain(e));
+    }
+  }
+  function applyOverview(result) {
+    const data = result.payload?.result ?? result.payload;
+    if (!data || !data.stories) return;
+    // Re-render only when the records changed, so polling never steals focus or a click.
+    const { generated_at: _at, ...records } = data;
+    const key = JSON.stringify(records);
+    const changed = key !== state.renderedKey;
+    state.overview = data;
+    state.renderedKey = key;
+    state.lastData = result.cache?.storedAt || Date.parse(data.generated_at) || Date.now();
+    showNotice();
+    setStatus(result.cache?.revalidating ? "stale" : "live", `Live · updated ${new Date(state.lastData).toLocaleTimeString()}${result.cache?.revalidating ? " · refreshing" : ""}`);
+    if (changed) renderBoard();
+  }
+  function watchBoard() {
+    state.unwatch?.();
+    state.unwatch = null;
+    state.renderedKey = null;
+    if (!state.projectId) return;
+    const input = { project_id: state.projectId, ...(state.phase ? { phase: state.phase } : {}) };
+    state.unwatch = state.mcp.watchTool(SERVER, "board_overview", input, ev => ev.type === "data" ? applyOverview(ev.result) : handleError(ev.error), { refetchInterval: REFETCH_MS });
+  }
+  async function loadOnce() {
+    try {
+      const r = await state.mcp.callTool(SERVER, "board_overview", { project_id: state.projectId, ...(state.phase ? { phase: state.phase } : {}) }, { cache: { refresh: true } });
+      applyOverview(r);
+    } catch (e) { handleError(e); }
+  }
+  async function loadProjects() {
+    const projects = await readTool("list_projects", {});
+    state.projects = projects || [];
+    if (!state.projects.length) {
+      setStatus("live", "Connected");
+      showNotice("warn", "No projects yet", "Ask Claude Code to create or import a project, then refresh.");
+      return;
+    }
+    if (!state.projects.some(p => p.id === state.projectId)) state.projectId = state.projects[0].id;
+    renderProjects();
+    watchBoard();
+  }
+
+  // ---- controls -----------------------------------------------------------
+  $("project-select").addEventListener("change", e => { state.projectId = e.target.value; store.set("project", state.projectId); state.epic = ""; watchBoard(); });
+  $("phase-select").addEventListener("change", e => {
+    state.phase = e.target.value; store.set("phase", state.phase);
+    if (snapshot) { state.overview = snapshot.overviews[state.phase] || snapshot.overviews[""]; renderBoard(); return; }
+    watchBoard();
+  });
+  $("epic-select").addEventListener("change", e => { state.epic = e.target.value; renderBoard(); });
+  $("search").addEventListener("input", e => { state.query = e.target.value; renderBoard(); });
+  $("refresh").addEventListener("click", () => { if (snapshot) return; if (state.mcp) { state.projects.length ? loadOnce() : start(); } else start(); });
+
+  // ---- boot ---------------------------------------------------------------
+  async function start() {
+    if (snapshot) {
+      // Snapshots embed one overview per phase so epic completion stays phase-specific.
+      state.projects = snapshot.projects; state.projectId = snapshot.project_id;
+      if (!(state.phase in snapshot.overviews)) state.phase = "";
+      state.overview = snapshot.overviews[state.phase];
+      renderProjects();
+      $("refresh").disabled = true;
+      setStatus("stale", `Snapshot captured ${when(snapshot.captured_at)} · not live`);
+      showNotice("warn", "Static snapshot", "This copy does not update. Run /cogumi-claude-kanban:snapshot again for newer data, or open the live board in the Claude desktop app.");
+      renderBoard();
+      return;
+    }
+    if (!window.claude?.use) { setStatus("off", "Not connected"); showNotice("err", "Open this board in Claude", noHost()); return; }
+    state.mcp = await window.claude.use("mcp");
+    if (!state.mcp) { handleError({ code: "not_granted" }); return; }
+    try { await loadProjects(); } catch (e) { handleError(e); }
+  }
+  start();
+})();
+</script>

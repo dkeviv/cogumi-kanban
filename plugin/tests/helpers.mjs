@@ -1,0 +1,14 @@
+import {dispatch} from '../src/engine/engine.ts';
+export const A='a'.repeat(40), B='b'.repeat(40), owner={id:'owner',role:'owner'};
+export function fixture(){let n=0;const board={projects:[]};const p=dispatch(board,'create_project',{strict_checks:false,name:'Test',binding:'repo:test',event_id:'create'},new Date(),owner);let claim;const go=(action,args={},actor=owner,now=new Date())=>dispatch(board,action,{project_id:p.id,binding:p.binding,story_id:'S1',event_id:`e${++n}`,...(['set_commit','begin_run','record_release','update_status','renew_claim'].includes(action)&&claim?{worker:'worker',lease_token:claim.token,attempt_id:claim.attempt_id}:{}),...args},now,actor);
+ const plan=[{type:'api',expected:'saved response'},{type:'integration',expected:'user isolation'}];go('import_stories',{source:'PRD',source_revision:'1',stories:[{id:'S1',epic:'E1',title:'Persist',criteria:['saved','isolated'],proof_plan:plan},{id:'S2',epic:'E1',title:'Second',criteria:['works'],proof_plan:[{type:'api',expected:'works'}],dependencies:['S1']}]});
+ go('set_requirements',{source:'PRD',source_revision:'1',requirements:[{id:'R1',epic:'E1',phase:'MVP',stories:['S1']},{id:'R2',epic:'E1',phase:'MVP',stories:['S2']}]});go('approve_scope',{phases:['MVP'],environments:['local','production'],reason:'owner approved'});
+ const ready=(id='S1')=>{go('update_status',{story_id:id,status:'Backlog'});go('update_status',{story_id:id,status:'Ready',reason:'approved'});};
+ const start=()=>{ready();if(p.workflow?.strict_checks)go('start_session',{thread_id:'fixture-session',binding:p.binding,commit:A,pending_events:0});const s=go('claim_story',{worker:'worker',branch:'fix',starting_commit:A,plan:'run criteria'});claim=s.claim;go('set_commit',{commit:A});go('update_status',{status:'Verifying'});};
+ const begin=(kind='functional',extra={})=>go('begin_run',{kind,commit:A,command:'node test',environment:kind==='deployed'?'production':'local',criteria:[0,1],verification_types:['api','integration'],mocked:false,dirty:false,...extra});
+ const evidence=(run,extra={})=>go('record_evidence',{evidence:{run_id:run.id,attempt_id:run.attempt_id,criterion_revision:run.criterion_revision,commit:A,end_commit:A,dirty:false,mocked:false,result:'pass',exit_code:0,output:'passed',...extra}});
+ const ev=(kind='functional',extra={})=>{const r=begin(kind,extra);return evidence(r);};
+ const release=(version='v1')=>go('record_release',{release:{commit:A,version,url:'https://example.test',environment:'production',result:'succeeded'}});
+ const ship=()=>{ev();go('update_status',{status:'Ready to ship'});release();ev('deployed',{release_version:'v1'});go('update_status',{status:'Shipped'});};
+ return {board,p,go,ready,start,begin,evidence,ev,release,ship,get s(){return p.stories[0]},get claim(){return claim}};
+}

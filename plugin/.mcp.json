@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "kanban": {
+      "command": "sh",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/run-node.sh", "${CLAUDE_PLUGIN_ROOT}/dist/server.mjs"]
+    }
+  }
+}

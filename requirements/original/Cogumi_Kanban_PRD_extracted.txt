@@ -1,0 +1,384 @@
+Cogumi Kanban Product Requirements
+
+Version 1.1 | October 6 2026 | Owner Vivek | Draft for review
+
+Cogumi Kanban is a private visual development tracker and plugin that Codex updates while implementing, testing and releasing approved work. It starts with Abovely and supports other projects through a reusable project model. This PRD describes the intended product, functional acceptance criteria and verified evidence requirements; it does not initiate development or an autonomous worker.
+
+Goal and promise
+
+Goal: Make autonomous development progress visible and trustworthy at story and epic level, with functional proof attached to every completion claim.
+
+Promise: See what Codex is working on, what passed, what is blocked and what was shipped, without manually maintaining a board. Missed reporting is recoverable and incomplete evidence cannot silently become a shipped card.
+
+The tracker does not guarantee bug free software or uninterrupted execution. It records and enforces process evidence; tests, review and deployed verification establish bounded confidence in behavior.
+
+Users and scope
+
+Owner: Vivek, viewing progress and approving scope. Worker: an active Codex task that selects and implements work. Reporter: authorized test or deployment scripts that submit objective results. Initial project: Abovely personal MVP.
+
+Included: private Kanban Site, Sites provisioned plugin with MCP tools, D1 records, evidence references, project and phase scoping, dependencies, guarded status transitions, durable reporting retries and resume reconciliation. Codex and Superpowers execute development; the tracker coordinates and records it. Include shared project state across threads, informal intake, optional OpenSpec mapping, requirement coverage and human requested rework.
+
+Excluded initially: billing, a commercial project management suite, automatic outbound messaging, replacing CI or source control, unrestricted autonomous deployment, and automatic restart of a stopped Codex task. Periodic detection is later scope; execution restart requires a separately verified service.
+
+Delivery phases
+
+Ranked epics
+
+Ranking note: Project binding, intake and coverage in Epic 9 are foundational and start alongside Epics 1 and 2. Rework actions in Epic 10 must exist before any completion claim is accepted; their later numbering groups the integration requirements rather than delaying them.
+
+State model
+
+Normal flow: Draft → Backlog → Ready → Implementing → Verifying → Ready to ship → Shipped. Draft holds unclear or unreviewed requests. Blocked records a reason and resumable prior state. Needs rework withdraws current completion eligibility after a human reports incomplete behavior. Failed checks return work to Implementing or Blocked. Historical releases remain preserved.
+
+An epic is an aggregate, not one oversized card. Cards represent stories or small phase specific slices. Epic progress is computed from its in scope stories; future phase work does not falsely block an MVP completion.
+
+Epic 1 Identity project scope and reliable records
+
+SEC 01 Restrict board and tools
+
+As the owner, I want only authorized actors to inspect or update project records.
+
+Authenticate browser and MCP access using supported Sites identity. Authorize script reporters through a verified service credential path, not a forged user ID.
+
+Keep project ownership, worker permissions and reporting permissions server side. Discovery exposes no private data.
+
+Reporter credentials cannot edit acceptance criteria or grant permissions. Keep secrets out of source, URLs, browser code and routine logs.
+
+DAT 01 Persist versioned work records
+
+As the owner, I want the board to survive sessions and retain its history.
+
+Use D1 for projects, epics, stories, criteria, work attempts, events and evidence metadata. Store evidence files in R2 only when required; otherwise use authorized durable references.
+
+Use optimistic version checks for edits and atomic status changes. Concurrent updates do not silently overwrite evidence.
+
+Retain an append only audit history of actor, transition, reason, timestamp and relevant commit. Derived UI state must agree with authoritative records.
+
+Epic 2 Backlog and acceptance criteria
+
+BKL 01 Import an approved project plan
+
+As the owner, I want the PRD converted into an actionable backlog.
+
+Import epics and phase specific stories with stable IDs, priority, scope, dependencies and acceptance criteria. Show a preview before committing an ambiguous import.
+
+Repeat imports update matched records without duplicates; changed criteria create a new revision rather than invalidating history silently.
+
+Abovely is initial data, not hardcoded product behavior. Keep an approved scope reference and source document version.
+
+BKL 02 Map criteria to verification
+
+As a developer, I want a proof plan before implementation.
+
+For each criterion define verification type, expected result and evidence requirement: browser, API, integration, deterministic logic or human review.
+
+Any waived criterion needs explicit owner authorization, rationale and scope. Blocked checks are not passes.
+
+Permit a story to be Ready only when criteria are testable and dependencies satisfied; circular dependencies are reported.
+
+Epic 3 Visual Kanban board
+
+UI 01 See current delivery state
+
+As the owner, I want a simple live board instead of a paid project management subscription.
+
+Show columns for all lifecycle states, cards with story and epic, phase, priority, actor, update time and blocker indicator.
+
+Filter by project, phase and epic; order ready work by approved priority and dependencies. Support an epic summary and story detail view.
+
+Refresh saved changes without redeployment through lightweight polling or another verified mechanism. Show last refresh and stale or unavailable status.
+
+UI 02 Inspect proof and limitations
+
+As the owner, I want to inspect why a card is complete.
+
+Story details expose criteria, results, tested commit, environment, commands, execution time, artifacts and release link.
+
+Show pass, fail, blocked, pending and authorized waiver distinctly. Screenshots cannot substitute for behavioral checks.
+
+Use a private reopenable Site and supported plugin view. Confirm actual rendering; initially a read only board is sufficient.
+
+Epic 4 Codex workflow and task claiming
+
+WRK 01 Select and claim eligible work
+
+As an active Codex worker, I want to select the next story without conflicts.
+
+Get next ready story considers project, authorized phase, priority and dependencies. Claim is atomic and creates an attempt and ownership lease.
+
+Two workers cannot claim the same active story accidentally. Expired claims become stale and require reconciliation before reassignment.
+
+Before implementation, record story ID, branch or checkout, starting commit and acceptance plan. Handle unavailable information explicitly.
+
+WRK 02 Update status through the workflow
+
+As the owner, I want Codex to maintain the board as it works.
+
+Plugin instructions require reading active state on start or resume, claiming before coding, reporting blockers and using standard verification and release commands.
+
+Expose tools for retrieving work, claiming, updating status, recording evidence, recording a release and reconciling state. Tool responses show whether each mutation was saved.
+
+Continue to the next eligible story within the approved execution scope. A tracker update cannot broaden implementation or deployment authorization.
+
+Installing the plugin does not start or keep alive a worker. Verify instruction packaging survives Site publication before relying on it.
+
+Epic 5 Functional test evidence
+
+TST 01 Report results from standard commands
+
+As a developer, I want test reporting to happen as part of executing checks.
+
+A project specific wrapper runs real checks, captures exit status and results, saves evidence locally and submits a uniquely identified event.
+
+Record criterion IDs, exact tested commit, dirty working tree state, environment, command, test run ID and artifacts. Identify mocked versus real integrations.
+
+Report failure even when a command crashes. A result with incomplete provenance cannot satisfy a required gate.
+
+TST 02 Enforce proof appropriate to the criterion
+
+As the owner, I want functionality proven rather than inferred from test counts.
+
+Browser flows assert outcomes and preserve traces or screenshots where useful; API checks verify responses and saved state; isolation tests attempt cross user access.
+
+Run relevant regression checks and compare implementation to the approved criteria. Build or lint success alone cannot establish functionality.
+
+For LLM products, record coaching evaluation separately from deterministic application tests. Human judgment or model evaluated results are labeled, not presented as deterministic guarantees.
+
+Epic 6 Deployment verification and release gates
+
+SHP 01 Gate release readiness
+
+As the owner, I want missing proof to prevent false completion.
+
+Backend allows Ready to ship only when required checks qualify for the intended source version and critical failures are resolved.
+
+Any source change after a passing run invalidates eligibility for affected checks; use a conservative full gate invalidation initially.
+
+Pending reporting or unreachable evidence marks status unverified. A success summary from a worker is not sufficient.
+
+SHP 02 Record and verify a deployment
+
+As a developer, I want a shipped card tied to a verified release.
+
+Standard deployment workflow captures the actual provider release or version identifier, deployed source commit, environment and observed URL.
+
+Wait for successful deployment and run prescribed checks against the deployed version or supported host surface. Do not synthesize release URLs.
+
+Shipped requires qualifying pre release evidence plus deployed verification. Failed deployment stays Ready to ship or becomes Blocked with the reason.
+
+For Sites, reuse supported publishing tools. If generic wrapper interception is unsupported, Codex records structured provider results; do not claim an event driven integration exists without testing it.
+
+Epic 7 Durable reporting and recovery
+
+REL 01 Recover missed reporting
+
+As the owner, I want an outage to delay reporting rather than lose it.
+
+Save events in a repository scoped local outbox before attempting delivery. Retry with bounded backoff; retain failure state visibly.
+
+Use unique event IDs and backend idempotency; duplicate delivery cannot create duplicate evidence or transitions.
+
+Local scratch can disappear. Preserve critical outbox checkpoints in durable approved storage or source control without credentials; document the durability boundary.
+
+Out of order events are accepted as history but cannot override a newer attempt or source version.
+
+REL 02 Resume interrupted work safely
+
+As an active Codex worker, I want to recover the actual state after interruption.
+
+On start or resume, inspect pending events, active claim, source state, saved test runs and known releases; reconcile before proceeding.
+
+Distinguish implementation failure, report delivery failure and a stopped worker. No missing signal is interpreted as success.
+
+Reclaim or release a stale story only after verifying prior work and ownership. Preserve diagnostic information and avoid duplicate deployment.
+
+Epic 8 Reconciliation and proactive detection
+
+REC 01 Reconcile at workflow checkpoints
+
+As the owner, I want missed updates detected without relying only on model memory.
+
+Run reconciliation on start or resume, after standard test and deployment commands, and before closing a story.
+
+Compare board eligibility to current commit, qualifying evidence and release state; repair only provable discrepancies and record the repair.
+
+Conflicting or unverifiable state is flagged for investigation rather than silently marking complete.
+
+REC 02 Detect stale work periodically
+
+As the owner, I want stale claims and undelivered results surfaced proactively in the next stage.
+
+Use a supported schedule to inspect stale claims, failed reporting and outdated gates; surface them on the board with last reconciliation time.
+
+Use a lease heartbeat or bounded expected activity window so long tests are not mistaken for a dead worker. Thresholds are configuration, not guessed facts.
+
+Scheduler can detect and reconcile authorized records but cannot restart Codex unless a supported execution mechanism is separately implemented and authorized.
+
+Epic 9 Project continuity intake and source integration
+
+PRJ 01 Maintain one project view across threads
+
+As the owner, I want all project conversations to use one shared board.
+
+Bind an opaque project ID to the repository or Site identity using project configuration. Threads record associations and work attempts, not independent duplicate boards.
+
+On start or resume, resolve the binding and retrieve active stories, blockers, evidence and recent results. Ask for project selection if ambiguous; never guess from a similar title.
+
+Validate project and repository identity before mutations. Support multiple repositories through explicit bindings. Branches and worktrees remain part of the same project unless explicitly separated.
+
+Test two threads updating the same authorized project and reject conflicting writes or duplicate active claims. Thread closure does not delete project state.
+
+INT 01 Create a backlog without a PRD
+
+As the owner, I want to track work from an informal request.
+
+Codex follows plugin intake instructions to extract goals, scope, proposed stories and testable acceptance criteria. There is no separate coach agent or mandatory extra LLM service.
+
+Keep ambiguous or unreviewed requirements Draft and outside the autonomous execution queue. Show the proposed scope for user review before execution.
+
+Use one story for a small change; create epics only when grouping is useful. Respect prior authorization and do not repeat approval for unchanged reviewed scope.
+
+New requests during execution become proposed additions or criterion revisions; preserve the original request and decision history.
+
+COV 01 Map every approved requirement
+
+As the owner, I want omitted work detected before an epic looks complete.
+
+Map every approved requirement to one or more stable story IDs or an explicitly authorized exclusion. Display unmapped requirements and their source revision.
+
+Compare imported backlog against the full source, not only tasks already present. Prevent scope completion claims while required coverage is unresolved.
+
+Removing or deferring a required story requires an explicit owner decision, rationale and revised phase scope. Keep removed records and historical evidence auditable.
+
+EPC 01 Compute phase specific epic completion
+
+As the owner, I want missing stories to keep an epic incomplete.
+
+Compute progress from required stories for the selected phase: for example four of five shipped, with remaining story names. Do not permit manual green status to bypass child work.
+
+Phase complete requires all required in scope stories shipped with qualifying current evidence; authorized exclusions are visible separately, not counted as shipped.
+
+Distinguish MVP complete from entire epic complete. A reopened or Needs rework child immediately flags the epic and withdraws affected completion claims.
+
+Test missing, blocked, waived, deferred and reopened children and verify denominators and labels.
+
+OSP 01 Integrate OpenSpec optionally
+
+As a developer, I want a board for OpenSpec work without a competing specification system.
+
+When present, OpenSpec files in Git remain the source of truth for requirements, scenarios, proposals and tasks. Kanban owns operational state, claims, blockers, proof and releases.
+
+Import using the verified installed OpenSpec format; map project, change, source path, source revision, requirement or scenario reference and task to stable tracker IDs. Do not assume every task equals one story.
+
+Reimports reconcile additions and changes without duplicates. Deleted or materially changed requirements become review items; retain historical mappings and invalidate affected evidence where needed.
+
+OpenSpec checked tasks, archive state and verification reports are signals, not shipped verdicts. Functional execution and deployed verification gates remain mandatory.
+
+Codex proposes source changes through the appropriate OpenSpec workflow; board status writes do not silently rewrite requirements. PRD and informal intake still work when OpenSpec is absent.
+
+Epic 10 Human feedback and rework
+
+REW 01 Report incomplete work
+
+As the owner, I want to correct completion claims from the board or chat.
+
+Allow Needs rework on a selected story through UI or MCP; capture observed behavior, expected outcome and optional reproduction details.
+
+Flag the story and parent epic immediately. Classify as unmet approved requirement, regression, additional scope or ambiguous requirement; classification does not erase the report.
+
+Reopen unmet work; link regressions to corrective work; place new scope in Draft for review. Preserve prior release and assessment history.
+
+Only an authorized owner can reject or revise scope; reporting technical evidence does not grant a script that authority.
+
+REW 02 Verify a corrective implementation
+
+As the owner, I want reported failures fixed with evidence.
+
+For reproducible defects, create a check that demonstrates the reported failure before the fix; record failures that require manual reproduction honestly.
+
+Fix, run affected acceptance checks and regressions, deploy within authorized scope and verify the correction on the deployed version.
+
+Old passing results cannot close the rework report. Associate the new attempt, criterion revision if changed, source commit and release with the report.
+
+If the human says behavior is still incomplete, keep rework open; do not override the report simply because an automated test passed.
+
+Architecture and integration boundaries
+
+Private ChatGPT Site with HTML Kanban UI, D1 data and a Sites hosted HTTP MCP endpoint. Sites provisions the associated plugin; avoid creating a duplicate. Optional R2 holds evidence artifacts. Codex development runs outside the tracker and reports via MCP or an authenticated HTTP reporter endpoint.
+
+Workflow driven updates rely on active Codex execution and plugin instructions. Event driven updates are emitted by verified wrappers or CI hooks. Durable outbox and backend gates address reporting failure; resume and scheduled reconciliation address missed signals. None is an unconditional guarantee of execution.
+
+Required entities: project, epic, phase, story, criterion revision, dependency, work attempt, claim lease, status event, verification run, evidence artifact, release record, reporting event and reconciliation record. Actor and project scope accompany mutations. Add project bindings, thread associations, source revisions, requirement coverage mappings, scope decisions, rework reports and OpenSpec adapter mappings.
+
+Git contains product code and approved executable acceptance definitions. The tracker stores operational status and proof references. Record the commit that was tested; do not introduce a new code commit solely for a board status update and accidentally invalidate the release candidate.
+
+Acceptance scenarios for the tracker
+
+Import the same Abovely backlog twice without duplicate stories; preserve IDs and history.
+
+Two simultaneous claims result in one winner and a clear conflict for the other.
+
+A failed functional check cannot produce Ready to ship; a missing deployed check cannot produce Shipped.
+
+Change code after passing tests and verify the old evidence no longer qualifies.
+
+Disconnect the tracker during a test run, retain results, reconnect and replay once without duplication.
+
+Deliver older results after a newer attempt and verify no state regression.
+
+Stop and resume a worker; reconcile the source and active card without inventing completion.
+
+Deploy unsuccessfully and verify the card is not Shipped; successfully deploy and verify required behavior before shipping.
+
+An unauthorized actor cannot read project records, change criteria, submit evidence or mark releases.
+
+Board updates appear after refresh without a redeployment; stale data is visibly labeled.
+
+Resolve the same project from two separate threads and retain one board and stable story IDs.
+
+Convert an informal request into Draft stories; executable work starts only after scope review.
+
+Import an OpenSpec change twice, then modify or delete a requirement; show review items without duplicate stories or silent scope removal.
+
+Leave one required story unfinished and verify the epic cannot display phase complete.
+
+Report a shipped story incomplete through chat and board UI; withdraw completion, preserve history and require new corrective evidence.
+
+Success measures
+
+Measure accepted criteria with qualifying evidence, shipped records linked to verified releases, prevented invalid transitions, duplicate event count, unresolved stale work, reporting recovery time and manual owner correction frequency. Establish baselines during the first Abovely epic; do not claim zero bugs from green checks.
+
+Dependencies and open decisions
+
+Verify Sites plugin instruction packaging, script service authentication, evidence artifact access and retention, actual Kanban app placement, test runner compatibility, Sites deployment reporting and any periodic schedule. Choose lease duration, retry limits and evidence retention during implementation. Owner approved scope must specify which project, phase and environments Codex may autonomously change or deploy.
+
+
+Stage | Delivery
+MVP | One owner, multiple project capable schema, Abovely import, board, MCP workflow, script reporting, evidence gates, local retry queue and resume recovery.
+Next | Periodic stale work detection, CI integration and additional projects; optional collaborators with explicit authorization.
+Later conditional | Automatic worker dispatch or restart only when execution capability and authorization are verified.
+
+
+Rank | Epic
+1 | Identity project scope and reliable records
+2 | Backlog and acceptance criteria
+3 | Visual Kanban board
+4 | Codex workflow and task claiming
+5 | Functional test evidence
+6 | Deployment verification and release gates
+7 | Durable reporting and recovery
+8 | Reconciliation and proactive detection
+9 | Project continuity intake and source integration
+10 | Human feedback and rework
+
+
+State | Entry requirement
+Backlog | Story exists; scope may need clarification.
+Ready | Phase approved, acceptance criteria testable, dependencies satisfied.
+Implementing | Authorized worker claims the story with a current work attempt.
+Verifying | Implementation commit identified; checks starting.
+Ready to ship | Required criteria passed on the candidate commit; no unresolved critical failures.
+Shipped | Release succeeded and deployed behavior was verified against required criteria.
+Blocked | Reason, last known state, next action and responsible dependency recorded.
+Draft | Unstructured or unresolved request awaiting scope confirmation.
+Needs rework | Human reported missing behavior; current completion eligibility withdrawn pending classification and verification.
