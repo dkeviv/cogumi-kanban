@@ -29,14 +29,16 @@ Status: **Covered** = implemented and tested. **Verified manually** = exercised 
 | REC 02 periodic detection | Not implemented | — | Next stage by PRD |
 | PRJ 01 binding, worktrees, sessions | `binding.ts`; engine `resolve_project`, `add_binding`, `associate_thread`; hook | binding (normalization, worktrees); review-fixes edge cases; completeness | Covered |
 | INT 01 informal intake | Engine `propose_intake`, `decide_intake` | completeness; bug-fixes | Covered |
-| COV 01 coverage, exclusions, display | Engine `set_requirements`, `exclude_requirement`; `views.ts coverage`; board list | coverage "excluded requirement…"; source-coverage | Covered |
+| COV 01 coverage, exclusions, display | Engine `set_requirements`, `exclude_requirement`, `exclude_story` (reason required; revised phase scope recorded with `approve_scope`, per PRD v2.1); `views.ts coverage`; board list | coverage "excluded requirement…"; source-coverage | Covered |
 | EPC 01 phase completion | Engine `summary` | source-coverage; views; review-regressions | Covered |
 | OSP 01 OpenSpec | `scripts/openspec-*.mjs` (`kanban openspec`); engine `import_source_bundle` | source-import; source-coverage | Covered |
 | REW 01 rework from board or chat | Engine `request_rework`, `classify_rework`; board form | views "scenario 15"; coverage "closed rework…"; board-page "rework from the board" | Covered |
 | REW 02 corrective verification | Engine `record_reproduction`, generation bump | coverage "closed rework…"; bug-fixes reproduction | Covered |
-| PLG 01 plugin packaging, bundled runtime, launcher | `.claude-plugin/`, `.mcp.json`, `hooks/`, `bin/`, `build.mjs` | plugin (manifests, dist current, launcher); coverage "launcher discovers nvm" | Covered; `claude plugin validate` passes and isolated install verified manually |
+| PLG 01 plugin packaging, bundled runtime, launcher | `.claude-plugin/`, `.mcp.json`, `hooks/`, `bin/`, `build.mjs` | plugin (manifests, dist current, launcher); coverage "launcher discovers nvm"; install (isolated marketplace install) | Covered |
 | PLG 02 board publication | `commands/board.md`, board template | plugin "manifest names exactly…" | Covered statically; host reachability Open |
 | MIG 01 ChatGPT import | `migrate.ts`, `cli import` | migrate (5); review-fixes import validation | Covered |
+
+End-to-end: e2e-strict "strict project goes from creation to Shipped by following the skill…" walks the documented workflow through `bin/kanban` on a strict project.
 
 ## Acceptance scenarios
 
@@ -57,7 +59,7 @@ Status: **Covered** = implemented and tested. **Verified manually** = exercised 
 | 13 | source-coverage bundle; source-import |
 | 14 | views; source-coverage |
 | 15 | coverage "closed rework…"; board-page "rework from the board"; review-regressions B01 |
-| 16 | plugin static checks; mcp stdio; manual: `claude plugin validate`, isolated marketplace install, headless Claude session calling the tools |
+| 16 | install "plugin installs from its marketplace into a clean configuration…" (validate, marketplace add, install, details, installed server and hook start); plugin static checks; manual: headless Claude session calling the tools |
 | 17 | migrate "import strips derived fields…", CLI round-trip |
 | 18 | workflow "scenario 18" |
 | 19 | workflow "scenario 19" |
