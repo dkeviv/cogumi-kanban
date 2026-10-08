@@ -1,6 +1,6 @@
 # Cogumi Claude Kanban — Product Requirements
 
-Version 2.0 | October 7 2026 | Owner Vivek | Aligned with the Claude local-database plan (alignment review applied)
+Version 2.1 | October 7 2026 | Owner Vivek | Aligned with the Claude local-database plan; updated after code and coverage reviews
 Derived from: Cogumi Kanban PRD v1.1 (ChatGPT Sites edition), source commit 7f33b02
 
 Cogumi Claude Kanban is a private visual development tracker that ships as a Claude Code plugin. Claude Code updates it while implementing, testing and releasing approved work. All records live in a local SQLite database on the owner's machine; the Kanban board is a Claude Artifact that reads the plugin's local MCP server live. It starts with Abovely and supports other projects through a reusable project model. This PRD describes the intended product, functional acceptance criteria and verified evidence requirements; it does not initiate development or an autonomous worker.
@@ -49,12 +49,12 @@ Ranking note: Project binding, intake and coverage in Epic 9 are foundational an
 
 ## State model
 
-Normal flow: Draft → Backlog → Ready → Implementing → Verifying → Ready to ship → Shipped. Draft holds unclear or unreviewed requests. Blocked records a reason and resumable prior state. Needs rework withdraws current completion eligibility after a human reports incomplete behavior. Failed checks return work to Implementing or Blocked. Historical releases remain preserved.
+Normal flow: Draft → Backlog → Ready → Implementing → Verifying → Ready to ship → Shipped. Draft holds unclear or unreviewed requests. Blocked records a reason, the prior state, the next action and the responsible dependency; work resumes from Blocked through Backlog → Ready and a fresh claim, so the previous attempt is ended explicitly rather than silently continued. Needs rework withdraws current completion eligibility after a human reports incomplete behavior. Proof that stops qualifying (a failed check, a source change, rework) demotes Ready to ship to Verifying and Shipped to Needs rework; a worker may also move Verifying back to Implementing. Historical releases remain preserved.
 
 | State | Entry requirement |
 |---|---|
 | Backlog | Story exists; scope may need clarification. |
-| Ready | Phase approved, acceptance criteria testable, dependencies satisfied. |
+| Ready | Phase approved, acceptance criteria testable, every dependency Shipped with qualifying deployed proof, no circular dependencies. |
 | Implementing | Authorized worker claims the story with a current work attempt. |
 | Verifying | Implementation commit identified; checks starting. |
 | Ready to ship | Required criteria passed on the candidate commit; no unresolved critical failures. |
@@ -71,7 +71,7 @@ An epic is an aggregate, not one oversized card. Cards represent stories or smal
 
 As the owner, I want only my own local tools to inspect or update project records.
 
-- The MCP server communicates only over stdio with the Claude Code process that launched it. It opens no network port. The data root is created with owner-only permissions (0700) and every file in it, including SQLite's `-wal` and `-shm` side files, is created under umask 077.
+- The MCP server communicates only over stdio with the Claude Code process that launched it. It opens no network port. The data root is created with owner-only permissions (0700). The MCP server, command-line tool, hook and reporter scripts all run under umask 077 and create files with explicit owner-only modes, so every file in the data root, including SQLite's `-wal` and `-shm` side files, is readable only by the owner.
 - Every mutation carries an actor. MCP calls act as the local owner (`local:<os user>`). Reporter scripts construct a reporter actor scoped to the project, story and work attempt named in their configuration, and the transport rejects a scope whose attempt does not exist on that story. For a reporter actor the engine permits only begin_run, record_evidence, record_release, heartbeat_attempt, checkpoint_attempt and restore_checkpoint for that scope; it rejects editing acceptance criteria, authorizing scope, claiming work, reopening stories and every other action. This is a guard against mistakes and over-broad automation, not authentication.
 - The Artifact board reaches the MCP server only through the Claude app's host MCP bridge and only for the tools named in its manifest: the redacted read tools (list_projects, board_overview, story_detail) and request_rework. Raw get_board output, which contains lease tokens and full evidence output, is never exposed to the page. To be verified during implementation: per-viewer consent prompts and the restriction on public sharing for pages that declare a local server.
 - Trust boundary is documented honestly: any process running as the same OS user can read or modify the database file. No credentials are required; secrets never enter the database, checkpoints, outbox, source or routine logs. Credential checks match secret value patterns and an explicit key denylist; benign keys that merely contain the word "token" (for example `max_tokens` in test output) never reject a checkpoint, while credential-looking values in captured output are redacted before they are stored.
@@ -80,7 +80,7 @@ As the owner, I want only my own local tools to inspect or update project record
 
 As the owner, I want the board to survive sessions and retain its history.
 
-- All local state lives under one data root, `~/.cogumi-claude-kanban/` (override with `COGUMI_KANBAN_HOME`): `kanban.db` (override with `COGUMI_KANBAN_DB`), `outbox/` (with `outbox/.rejected/`), `runs/` and optional `checkpoints/`. The plugin's own install directory holds no data, so uninstalling or updating the plugin never deletes records.
+- All local state lives under one data root, `~/.cogumi-claude-kanban/` (override with `COGUMI_KANBAN_HOME`): `kanban.db` (override with `COGUMI_KANBAN_DB`), `outbox/` with `outbox/.rejected/` (override with `COGUMI_OUTBOX`), `runs/` (override with `COGUMI_RUNS`), `snapshots/`, and `configs/` for non-secret reporter configurations. Checkpoints are stored in the database; an additional copy is written to `COGUMI_CHECKPOINT_DIR` when the owner configures separate durable storage. The plugin's own install directory holds no data, so uninstalling or updating the plugin never deletes records.
 - Use one local SQLite database for projects, epics, stories, criteria, work attempts, events and evidence metadata. Evidence files remain on local disk or in the product repository and are stored as authorized durable references.
 - Use optimistic version checks for edits and atomic compare-and-swap status changes so concurrent Claude sessions, scripts and the board cannot silently overwrite evidence. The MVP keeps the engine's model of one JSON board document per owner with whole-document compare-and-swap; on a conflict the storage adapter re-reads and retries the same request with the same event ID a bounded number of times (the engine is idempotent per event ID). Use SQLite WAL mode and a busy timeout so concurrent local processes wait instead of failing immediately.
 - Retain an append only audit history of actor, transition, reason, timestamp and relevant commit. Derived UI state must agree with authoritative records.
@@ -120,7 +120,7 @@ As the owner, I want a simple live board instead of a paid project management su
 
 As the owner, I want to inspect why a card is complete.
 
-- Story details expose criteria, results, tested commit, environment, commands, execution time, artifacts and release link.
+- Story details expose criteria, results, tested commit, environment, commands, execution time (duration and finish time), artifacts (an https reference recorded by the wrapper) and release link. Unmapped requirements are listed by ID with their source revision.
 - Show pass, fail, blocked, pending and authorized waiver distinctly. Screenshots cannot substitute for behavioral checks.
 - Initially the board is read only except for reporting rework (REW 01). Confirm actual rendering of the page before relying on it.
 
@@ -175,7 +175,7 @@ As the owner, I want missing proof to prevent false completion.
 
 As a developer, I want a shipped card tied to a verified release.
 
-- The standard release command records the project's actual provider result: provider, deployment ID, version identifier, deployed source commit, status, environment and observed HTTPS URL. The MVP engine requires an HTTPS URL; releases without one (for example a package publish) record the provider's HTTPS release page.
+- The standard release command records the project's actual provider result: provider, deployment ID, version identifier, deployed source commit, status, environment and observed HTTPS URL. The release command requires all of these; the underlying record_release tool requires commit, version, URL, environment and result, with provider and deployment ID optional for manual records. The MVP engine requires an HTTPS URL; releases without one (for example a package publish) record the provider's HTTPS release page.
 - Wait for successful deployment and run prescribed checks against the deployed version. Do not synthesize release URLs.
 - Shipped requires qualifying pre release evidence plus deployed verification. Failed deployment stays Ready to ship or becomes Blocked with the reason.
 - The tracker is provider neutral. Claude records structured provider results from whatever publisher the project uses; do not claim an event driven provider integration exists without testing it.
@@ -246,7 +246,7 @@ As the owner, I want omitted work detected before an epic looks complete.
 
 - Map every approved requirement to one or more stable story IDs or an explicitly authorized exclusion. Display unmapped requirements and their source revision.
 - Compare imported backlog against the full source, not only tasks already present. Prevent scope completion claims while required coverage is unresolved.
-- Removing or deferring a required story requires an explicit owner decision, rationale and revised phase scope. Keep removed records and historical evidence auditable.
+- Removing or deferring a required story requires an explicit owner decision with rationale (exclude_story, exclude_requirement); a revised phase scope is recorded through approve_scope. Keep removed records and historical evidence auditable.
 
 ### EPC 01 Compute phase specific epic completion
 
@@ -294,7 +294,7 @@ As the owner, I want reported failures fixed with evidence.
 As the owner, I want to install the tracker with Claude Code's plugin system.
 
 - Ship a plugin (`cogumi-claude-kanban`) with `.claude-plugin/plugin.json`, a marketplace manifest, an MCP server definition, a workflow skill, slash commands and a SessionStart hook. Installation is `/plugin marketplace add <path or Git URL>` followed by `/plugin install cogumi-claude-kanban@cogumi`.
-- The MCP server, hook and command-line tools ship as bundled JavaScript (dependencies included, no TypeScript at runtime) so installation needs no package manager step. They require Node.js 22.13 or newer. A launcher (`bin/run-node.sh`, used by every instruction through the `bin/kanban` wrapper) locates `node` even when the desktop app does not inherit the shell PATH (PATH, then Homebrew, `/usr/local`, nvm, Volta and fnm locations) and prints an actionable error if no suitable version is found.
+- The MCP server, hook, command-line tool and the library the reporter scripts import ship as bundled JavaScript (dependencies included, no TypeScript at runtime); the reporter scripts themselves are plain dependency-free JavaScript modules. Installation needs no package manager step. They require Node.js 22.13 or newer. A launcher (`bin/run-node.sh`, used by every instruction through the `bin/kanban` wrapper) locates `node` even when the desktop app does not inherit the shell PATH (PATH, then Homebrew, `/usr/local`, nvm, Volta and fnm locations) and prints an actionable error if no suitable version is found.
 - The plugin creates its data root on first use and never writes into the product checkout.
 - Uninstalling the plugin does not delete the database.
 
@@ -347,7 +347,7 @@ Git contains product code and approved executable acceptance definitions. The tr
 17. Import a ChatGPT-edition board export; counts and IDs match, claims are expired, derived fields are absent, and a second import of the same export is a no-op reporting zero changes.
 18. Running the reporter wrapper leaves the product checkout's Git status and Git configuration unchanged.
 19. A check whose output contains keys such as `max_tokens` or text such as `Bearer abc` is checkpointed and recorded successfully, with credential-looking values redacted.
-20. A permanently rejected outbox event is moved to the rejected area with its reason, later events are still delivered, and observe/start_session surface the rejected count.
+20. A permanently rejected outbox event is moved to the rejected area with its reason, later events are still delivered, the affected run is recorded as blocked, and `observe`, the SessionStart hook and the checkpoint's delivery error surface the rejected events (start_session itself records only the pending count).
 21. A heartbeat failure during a running check is recorded as a warning and the check runs to completion.
 22. Two worktrees of the same repository, and SSH versus HTTPS clones of the same origin, resolve to the same project.
 
@@ -357,7 +357,7 @@ Measure accepted criteria with qualifying evidence, shipped records linked to ve
 
 ## Dependencies and open decisions
 
-Verify that plugin-provided MCP servers are reachable as Artifact host servers in the Claude desktop app, the Artifact manifest's per-tool allowlisting and consent behaviour, evidence artifact retention, test runner compatibility and any periodic schedule. Choose lease duration, retry limits and evidence retention during implementation. Owner approved scope must specify which project, phase and environments Claude may autonomously change or deploy.
+Verify that plugin-provided MCP servers are reachable as Artifact host servers in the Claude desktop app, the Artifact manifest's per-tool allowlisting and consent behaviour, evidence artifact retention, test runner compatibility and any periodic schedule. Decided during implementation: a claim lease lasts one hour and is renewed by the test wrapper's heartbeat (configurable interval, default 60 s) or by renew_claim; delivery retries a transient failure three times with backoff before retaining the event; MCP writes retry a compare-and-swap conflict up to six times. Evidence retention remains open. Owner approved scope must specify which project, phase and environments Claude may autonomously change or deploy.
 
 ## Appendix A — Platform mapping from the ChatGPT edition
 

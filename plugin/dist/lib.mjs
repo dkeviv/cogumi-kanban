@@ -5079,7 +5079,7 @@ function eligibleNow(project, story2) {
 }
 function card(project, s3) {
   const last = s3.history?.at(-1);
-  const openRework = (s3.rework || []).filter((r) => !r.resolved && !r.closed);
+  const openRework = (s3.rework || []).filter((r) => !r.closed_at && !r.resolved_at);
   return {
     id: s3.id,
     title: s3.title,
@@ -5104,6 +5104,17 @@ function card(project, s3) {
 function boardOverview(project, phase) {
   return redactValues(overview(project, phase));
 }
+function coverage(project, phase) {
+  const unmapped = new Set(summary(project, phase).unmapped);
+  const reqs = (project.requirements || []).filter((r) => !phase || r.phase === phase);
+  const item = (r) => ({ id: r.id, epic: r.epic, phase: r.phase, text: r.text || null, source_revision: r.source_revision || null, review_reason: r.review_reason || null });
+  return {
+    source: project.requirement_source || null,
+    total: reqs.length,
+    unmapped: reqs.filter((r) => unmapped.has(r.id)).map(item),
+    excluded: reqs.filter((r) => r.exclusion).map((r) => ({ ...item(r), reason: r.exclusion.reason }))
+  };
+}
 function overview(project, phase) {
   const stories = project.stories.filter((s3) => !phase || s3.phase === phase);
   return {
@@ -5113,6 +5124,7 @@ function overview(project, phase) {
     phases: [...new Set(project.stories.map((s3) => s3.phase))].sort(),
     epics: [...new Set(project.stories.map((s3) => s3.epic))].sort(),
     summary: summary(project, phase),
+    coverage: coverage(project, phase),
     stories: stories.map((s3) => card(project, s3)),
     rejections: (project.rejections || []).slice(-20),
     last_reconciliation: project.reconciliations?.at(-1) || null

@@ -15,6 +15,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const USAGE = 'Usage: workflow.mjs binding | observe|resume|checkpoint|before-close|test CONFIG | release CONFIG ACTUAL_PROVIDER_RESULT';
 
 async function main() {
+    process.umask(0o077);
     const [action, file, providerFile] = process.argv.slice(2);
     if (action === 'binding') { console.log(JSON.stringify(observeBinding(), null, 2)); return; }
     if (!action || !file) throw Error(USAGE);

@@ -4,6 +4,7 @@
 #   kanban workflow binding | observe|resume|checkpoint|before-close|test CONFIG | release CONFIG RESULT
 #   kanban report ACTION < event.json | flush | requeue [EVENT_ID...]
 #   kanban cli doctor | binding | export | import FILE [--replace] | snapshot [--project ID] [--out FILE]
+#   kanban openspec SPEC_DIRECTORY MAPPING.json OUTPUT.json
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 tool=$1
 [ $# -gt 0 ] && shift
@@ -11,5 +12,6 @@ case "$tool" in
   workflow) exec sh "$here/bin/run-node.sh" "$here/scripts/workflow.mjs" "$@" ;;
   report) exec sh "$here/bin/run-node.sh" "$here/scripts/report.mjs" "$@" ;;
   cli) exec sh "$here/bin/run-node.sh" "$here/dist/cli.mjs" "$@" ;;
-  *) echo "Usage: kanban workflow|report|cli ARGS..." >&2; exit 2 ;;
+  openspec) exec sh "$here/bin/run-node.sh" "$here/scripts/openspec-import.mjs" "$@" ;;
+  *) echo "Usage: kanban workflow|report|cli|openspec ARGS..." >&2; exit 2 ;;
 esac

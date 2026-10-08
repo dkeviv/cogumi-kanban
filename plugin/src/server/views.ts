@@ -18,7 +18,8 @@ export function eligibleNow(project: any, story: any) {
 
 function card(project: any, s: any) {
     const last = s.history?.at(-1);
-    const openRework = (s.rework || []).filter((r: any) => !r.resolved && !r.closed);
+    // The engine closes reports with closed_at / resolved_at timestamps.
+    const openRework = (s.rework || []).filter((r: any) => !r.closed_at && !r.resolved_at);
     return {
         id: s.id, title: s.title, epic: s.epic, phase: s.phase, priority: s.priority, status: s.status,
         blocker: s.blocker || s.blocked?.reason || null,
@@ -40,6 +41,20 @@ export function boardOverview(project: any, phase?: string) {
     return redactValues(overview(project, phase));
 }
 
+// Requirement coverage for the board (PRD COV 01): which requirements are unmapped,
+// which are excluded, and the source revision they came from.
+function coverage(project: any, phase?: string) {
+    const unmapped = new Set(summary(project, phase).unmapped);
+    const reqs = (project.requirements || []).filter((r: any) => !phase || r.phase === phase);
+    const item = (r: any) => ({ id: r.id, epic: r.epic, phase: r.phase, text: r.text || null, source_revision: r.source_revision || null, review_reason: r.review_reason || null });
+    return {
+        source: project.requirement_source || null,
+        total: reqs.length,
+        unmapped: reqs.filter((r: any) => unmapped.has(r.id)).map(item),
+        excluded: reqs.filter((r: any) => r.exclusion).map((r: any) => ({ ...item(r), reason: r.exclusion.reason })),
+    };
+}
+
 function overview(project: any, phase?: string) {
     const stories = project.stories.filter((s: any) => !phase || s.phase === phase);
     return {
@@ -49,6 +64,7 @@ function overview(project: any, phase?: string) {
         phases: [...new Set(project.stories.map((s: any) => s.phase))].sort(),
         epics: [...new Set(project.stories.map((s: any) => s.epic))].sort(),
         summary: summary(project, phase),
+        coverage: coverage(project, phase),
         stories: stories.map((s: any) => card(project, s)),
         rejections: (project.rejections || []).slice(-20),
         last_reconciliation: project.reconciliations?.at(-1) || null,

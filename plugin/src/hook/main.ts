@@ -2,6 +2,7 @@
 // path must never turn the hook into a silent no-op.
 import { runHook } from './session-start.ts';
 
+process.umask(0o077);
 let raw = '';
 for await (const chunk of process.stdin) raw += chunk;
 try {

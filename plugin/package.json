@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Cogumi Claude Kanban: evidence-gated delivery tracker for Claude Code with a local SQLite database and an Artifact Kanban board.",
-  "engines": { "node": ">=22.13.0" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test --test-concurrency=1 tests/",
@@ -12,6 +14,7 @@
   },
   "devDependencies": {
     "esbuild": "0.25.10",
+    "jsdom": "^25.0.1",
     "zod": "3.25.76"
   }
 }

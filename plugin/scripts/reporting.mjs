@@ -46,7 +46,7 @@ async function locked(dir, fn) {
     // Up to ~60 s: another worker's flush may hold the lock while SQLite is busy.
     for (let i = 0; i < 2400; i++) {
         try {
-            await fs.mkdir(lock);
+            await fs.mkdir(lock, { mode: 0o700 });
             await fs.writeFile(path.join(lock, 'owner.json'), JSON.stringify({ pid: process.pid, host: os.hostname(), nonce }), { mode: 0o600 });
             held = true;
             break;
@@ -56,7 +56,7 @@ async function locked(dir, fn) {
             try {
                 const owner = JSON.parse(await fs.readFile(path.join(lock, 'owner.json'), 'utf8'));
                 if (dead(owner)) {
-                    try { await fs.mkdir(guard); guarded = true; } catch (g) { if (g.code !== 'EEXIST') throw g; }
+                    try { await fs.mkdir(guard, { mode: 0o700 }); guarded = true; } catch (g) { if (g.code !== 'EEXIST') throw g; }
                     if (guarded) {
                         const current = JSON.parse(await fs.readFile(path.join(lock, 'owner.json'), 'utf8'));
                         if (dead(current)) {

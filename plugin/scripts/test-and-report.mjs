@@ -15,6 +15,7 @@ const git = args => spawnSync('git', args, { encoding: 'utf8' });
 function validate(cfg) {
     if (!Array.isArray(cfg.command) || !cfg.command.length || cfg.command.some(x => typeof x !== 'string')) throw Error('command must be argument array');
     if (typeof cfg.mocked !== 'boolean') throw Error('Explicit mocked boolean required');
+    if (cfg.artifact !== undefined && !/^https:\/\/\S+$/.test(cfg.artifact)) throw Error('artifact must be an https:// reference to the preserved trace, report or screenshot');
     if (!cfg.binding) throw Error('Exact binding required in reporter configuration');
     if (!cfg.attempt_id) throw Error('Reporter configuration requires attempt_id');
 }
@@ -66,6 +67,7 @@ function execute(cfg, run) {
 }
 
 async function main() {
+    process.umask(0o077);
     const cfg = JSON.parse(await fs.readFile(process.argv[2], 'utf8'));
     validate(cfg);
     const start = git(['rev-parse', 'HEAD']), before = git(['status', '--porcelain']);
@@ -99,6 +101,7 @@ async function main() {
         exit_code: result.status, signal: result.signal, error,
         output: ((result.stdout || '') + (result.stderr || '') + notes).slice(-64000),
         finished_at: new Date().toISOString(),
+        ...(cfg.artifact ? { artifact: cfg.artifact } : {}),
     };
     if (cfg.assertion_file) {
         try { evidence.assertions = JSON.parse(await fs.readFile(cfg.assertion_file, 'utf8')); }

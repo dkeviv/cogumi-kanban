@@ -5,6 +5,7 @@ import { enqueue, flush, requeue } from './reporting.mjs';
 import { closeReporterService } from '../dist/lib.mjs';
 
 async function main() {
+    process.umask(0o077);
     const [action, ...rest] = process.argv.slice(2);
     if (action === 'requeue') {
         const moved = await requeue(rest);

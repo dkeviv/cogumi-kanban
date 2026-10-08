@@ -64,6 +64,8 @@ button:disabled { opacity: .55; cursor: default; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 .epic .meta { display: flex; justify-content: space-between; gap: 8px; font-size: .8rem; font-variant-numeric: tabular-nums; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.unmapped { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .82rem; overflow-wrap: anywhere; }
+details.notice summary { cursor: pointer; font-weight: 600; }
 .chip { font-size: .72rem; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); background: var(--sunken); color: var(--muted); white-space: nowrap; }
 .chip.pass { color: var(--pass); background: var(--pass-bg); border-color: transparent; }
 .chip.fail { color: var(--fail); background: var(--fail-bg); border-color: transparent; }
@@ -128,6 +130,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
 
   <section class="section" aria-labelledby="epics-h">
     <div class="column-head"><h2 id="epics-h">Epic completion</h2><span class="count" id="coverage"></span></div>
+    <details class="notice warn" id="unmapped-block" hidden><summary>Unmapped requirements block completion</summary><ul id="unmapped" class="unmapped"></ul></details>
     <div class="epics" id="epics"><div class="epic"><span class="muted">Epic progress appears here once the board loads. Completion counts every in-scope story for the selected phase; filters never shrink it.</span></div></div>
   </section>
 
@@ -210,7 +213,10 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     fillSelect("phase-select", ov.phases, state.phase, "All phases");
     fillSelect("epic-select", ov.epics, state.epic, "All epics");
     const sum = ov.summary || { epics: [], unmapped: [] };
-    $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") : "Requirement coverage not registered";
+    const cov = ov.coverage || { unmapped: [], excluded: [] };
+    $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") + (cov.source ? ` · ${cov.source.source} @ ${cov.source.revision}` : "") : "Requirement coverage not registered";
+    $("unmapped").replaceChildren(...cov.unmapped.map(r => el("li", {}, el("span", { class: "mono" }, r.id), ` ${r.epic} · ${r.phase}`, r.text ? ` · ${r.text}` : "", r.review_reason ? el("span", { class: "why" }, ` (${r.review_reason})`) : "", r.source_revision ? el("span", { class: "muted" }, ` · rev ${r.source_revision}`) : "")));
+    $("unmapped-block").hidden = !cov.unmapped.length;
     const epics = sum.epics.filter(e => !state.epic || e.epic === state.epic);
     $("epics").replaceChildren(...(epics.length ? epics.map(e => {
       const pct = e.total ? Math.round(100 * e.shipped / e.total) : 0;
@@ -417,6 +423,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     $("project-select").replaceChildren();
     $("columns").replaceChildren();
     $("coverage").textContent = "";
+    $("unmapped-block").hidden = true;
     $("epics").replaceChildren(el("div", { class: "epic" }, el("span", { class: "muted" }, "Board data is hidden while the tracker is unavailable.")));
     closeSheet();
   }
