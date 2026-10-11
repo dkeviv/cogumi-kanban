@@ -1,7 +1,15 @@
 {
-  "name": "cogumi-claude-kanban",
-  "version": "2.0.0",
-  "description": "Evidence-gated delivery tracker for Claude Code: claims, real test evidence, release gates, rework and recovery in a local SQLite database, with a live Kanban board as a Claude Artifact.",
-  "author": { "name": "Vivek" },
-  "keywords": ["kanban", "delivery", "evidence", "workflow", "mcp"]
+  "name": "cogumi-kanban",
+  "version": "2.3.2",
+  "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
+  "author": {
+    "name": "Vivek"
+  },
+  "keywords": [
+    "kanban",
+    "delivery",
+    "evidence",
+    "workflow",
+    "mcp"
+  ]
 }

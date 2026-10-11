@@ -3,7 +3,7 @@ import { guide } from '../engine/engine.ts';
 import { KanbanService, tools, toolNames } from './service.ts';
 
 export const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-export const SERVER_INFO = { name: 'cogumi-claude-kanban', version: '2.0.0' };
+export const SERVER_INFO = { name: 'cogumi-kanban', version: '2.3.2' };
 export const MAX_MESSAGE = 4_000_000;
 
 export function instructions(pluginRoot: string) {
@@ -100,7 +100,7 @@ export function serveStdio(service: KanbanService, pluginRoot: string, input: No
         chain = chain.then(async () => {
             const response = await work();
             if (response) output.write(JSON.stringify(response) + '\n');
-        }).catch(e => { process.stderr.write(`cogumi-claude-kanban: ${(e as Error).message}\n`); });
+        }).catch(e => { process.stderr.write(`cogumi-kanban: ${(e as Error).message}\n`); });
     };
     const tooLarge = (prefix: string) => enqueue(async () => ({ jsonrpc: '2.0', id: sniffId(prefix), error: { code: -32600, message: `Message larger than ${MAX_MESSAGE} bytes` } }));
     const line = (text: string) => { const trimmed = text.trim(); if (trimmed) enqueue(() => handle(trimmed)); };

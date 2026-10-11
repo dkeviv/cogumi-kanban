@@ -1,3 +1,4 @@
+import { trackingHealth } from './tracking-health.ts';
 import { z } from 'zod';
 import { assertCredentialFree } from './checkpoints.ts';
 export const states = ['Draft', 'Backlog', 'Ready', 'Implementing', 'Verifying', 'Ready to ship', 'Shipped', 'Blocked', 'Needs rework'];
@@ -137,7 +138,7 @@ function invalidate(p: Project, s: Story) {
         s.blocker = 'Current functional proof pending or failed';
     }
 }
-export function summary(p: Project, phase?: string) { const rs = p.requirements.filter((r: any) => !phase || r.phase === phase); const unmapped = rs.filter((r: any) => !r.exclusion && (!r.stories.length || r.stories.some((id: string) => !p.stories.some((s: Story) => s.id === id && s.phase === r.phase && s.epic === r.epic)))).map((r: any) => r.id); const ss = p.stories.filter((s: Story) => !phase || s.phase === phase); const epics = [...new Set([...ss.map((s: Story) => s.epic), ...rs.map((r: any) => r.epic)])].map(epic => { const children = ss.filter((s: Story) => s.epic === epic && !s.exclusion && !s.proposal_pending); const reqs = rs.filter((r: any) => r.epic === epic); const unresolved = reqs.filter((r: any) => unmapped.includes(r.id)); const orphan = children.filter((s: Story) => !reqs.some((r: any) => r.stories.includes(s.id))); const shipped = children.filter((s: Story) => s.status === 'Shipped' && eligibility(p, s).deployed); return { epic, total: children.length, shipped: shipped.length, remaining: children.filter((s: Story) => !shipped.includes(s)).map((s: Story) => ({ id: s.id, title: s.title, status: s.status })), unmapped: unresolved.map((r: any) => r.id), unmapped_stories: orphan.map((s: Story) => s.id), proposals:ss.filter((s:Story)=>s.epic===epic&&s.proposal_pending).map((s:Story)=>({id:s.id,title:s.title})), excluded: [...ss.filter((s: Story) => s.epic === epic && s.exclusion).map((s: Story) => ({ id: s.id, ...s.exclusion })), ...reqs.filter((r: any) => r.exclusion).map((r: any) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length }; }); return { epics, unmapped, coverage_registered: !!p.requirement_source }; }
+export function summary(p: Project, phase?: string) { const rs = p.requirements.filter((r: any) => r.classification !== 'reference' && (!phase || r.phase === phase)); const unmapped = rs.filter((r: any) => !r.exclusion && (!r.stories.length || r.stories.some((id: string) => !p.stories.some((s: Story) => s.id === id && (r.cross_cutting || (s.phase === r.phase && s.epic === r.epic)))))).map((r: any) => r.id); const ss = p.stories.filter((s: Story) => !phase || s.phase === phase); const epics = [...new Set([...ss.map((s: Story) => s.epic), ...rs.filter((r:any)=>!r.cross_cutting || !r.stories.length).map((r: any) => r.epic)])].map(epic => { const children = ss.filter((s: Story) => s.epic === epic && !s.exclusion && !s.proposal_pending); const reqs = rs.filter((r: any) => r.epic === epic || (r.cross_cutting && r.stories.some((id:string)=>children.some((s:Story)=>s.id===id)))); const unresolved = reqs.filter((r: any) => unmapped.includes(r.id)); const orphan = children.filter((s: Story) => !reqs.some((r: any) => r.stories.includes(s.id))); const shipped = children.filter((s: Story) => s.status === 'Shipped' && eligibility(p, s).deployed); return { epic, total: children.length, shipped: shipped.length, remaining: children.filter((s: Story) => !shipped.includes(s)).map((s: Story) => ({ id: s.id, title: s.title, status: s.status })), unmapped: unresolved.map((r: any) => r.id), unmapped_stories: orphan.map((s: Story) => s.id), proposals:ss.filter((s:Story)=>s.epic===epic&&s.proposal_pending).map((s:Story)=>({id:s.id,title:s.title})), excluded: [...ss.filter((s: Story) => s.epic === epic && s.exclusion).map((s: Story) => ({ id: s.id, ...s.exclusion })), ...reqs.filter((r: any) => r.exclusion).map((r: any) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length }; }); return { epics, unmapped, coverage_registered: !!p.requirement_source }; }
 export const readActions = ['workflow', 'list_projects', 'resolve_project', 'get_board', 'next_story', 'preview_import', 'project_metrics', 'restore_checkpoint'];
 export function dispatch(board: Board, action: string, a: any, now = new Date(), actor?: Actor): any {
     req(actor?.id, 'Authenticated actor required');
@@ -209,7 +210,21 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         return { duplicate: true, event_id: event, result: p.eventRecords[event].result };
     }
     req(!p.events.includes(event), 'Legacy event ID has no replayable payload; reconcile before reusing it');
+    const advanceQueue = () => {
+        const backlog:string[]=[], ready:string[]=[], waiting:any[]=[];
+        for (const story of p.stories) {
+            if (!p.approval?.phases.includes(story.phase) || story.exclusion || story.proposal_pending || story.source_review) continue;
+            const change = (status:string) => dispatch(board,'update_status',{project_id:p.id,story_id:story.id,event_id:`${event}:queue:${story.id}:${status}`,status,reason:'Auto mode: advance unchanged approved scope through existing lifecycle gates'},now,actor);
+            if (story.status==='Draft') { change('Backlog'); backlog.push(story.id); }
+            if (story.status==='Backlog') {
+                try { change('Ready'); ready.push(story.id); }
+                catch (error) { waiting.push({story_id:story.id,reason:(error as Error).message}); }
+            }
+        }
+        return {backlog,ready,waiting};
+    };
     const save = (result: any, s?: Story, data: any = {}) => {
+        if (p.workflow.delivery_mode==='auto' && (['approve_scope','import_stories','reconcile'].includes(action) || (action==='update_status' && a.status==='Shipped'))) advanceQueue();
         const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
         p.audit.push(audit);
         if (s) {
@@ -221,6 +236,32 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         p.eventRecords[event] = { payload, result: JSON.parse(JSON.stringify(s === result ? { id: s.id, version: s.version, status: s.status } : result)) };
         return result;
     };
+    if (action==='set_delivery_mode') {
+        owner(actor); const mode=z.enum(['auto','approval']).parse(a.mode); str.parse(a.reason);
+        p.workflow.delivery_mode=mode;
+        p.workflow.mode_decision={mode,reason:a.reason,actor:actor.id,at:now.toISOString()};
+        return save({mode,queue:mode==='auto'?advanceQueue():{backlog:[],ready:[],waiting:[]}});
+    }
+    if (action==='advance_queue') {
+        owner(actor);req(p.workflow.delivery_mode==='auto','Queue automation requires Auto mode');
+        return save(advanceQueue());
+    }
+    if (action==='classify_requirements') {
+        owner(actor);str.parse(a.reason);
+        const entries=z.array(z.object({id,classification:z.enum(['reference','requirement']),stories:z.array(id),cross_cutting:z.boolean()})).min(1).max(1000).parse(a.entries);
+        req(new Set(entries.map(x=>x.id)).size===entries.length,'Duplicate classification IDs');
+        for (const entry of entries) {
+            req(p.requirements.some((r:any)=>r.id===entry.id),'Requirement not found: '+entry.id);
+            req(entry.classification!=='reference'||entry.stories.length===0,'Reference material cannot map to delivery stories');
+            req(entry.stories.every(storyId=>p.stories.some((s:Story)=>s.id===storyId)),'Unknown mapped story');
+        }
+        for (const entry of entries) {
+            const r=p.requirements.find((r:any)=>r.id===entry.id);
+            r.mapping_history ||= [];r.mapping_history.push({stories:r.stories,classification:r.classification||'requirement',cross_cutting:!!r.cross_cutting,at:now.toISOString(),actor:actor.id,reason:a.reason});
+            Object.assign(r,{classification:entry.classification,stories:entry.stories,cross_cutting:entry.cross_cutting});
+        }
+        return save({classified:entries.length,summary:summary(p)});
+    }
     if (action === 'add_binding') {
         owner(actor);const binding=str.parse(a.binding);str.parse(a.reason);
         req(!board.projects.some(x=>x.id!==p.id&&x.bindings.includes(binding)), 'Binding already belongs to another project');
@@ -256,7 +297,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         // Nested writes share the enclosing D1 CAS transaction; no partial DB import.
         let imported:any={added:0,changed:0,unchanged:0};
         if(bundle.stories.length)imported=dispatch(board,'import_stories',{project_id:p.id,event_id:event+':stories',stories:bundle.stories,source,source_revision:revision,reason:a.reason},now,actor);
-        const requirements=bundle.requirements.map((r:any)=>({id:r.id,epic:r.epic,phase:r.phase,stories:r.stories,text:r.text,source_path:r.source_path,source_revision:revision}));
+        const requirements=bundle.requirements.map((r:any)=>({id:r.id,epic:r.epic,phase:r.phase,stories:r.stories,text:r.text,source_path:r.source_path,source_revision:revision,classification:r.classification,cross_cutting:r.cross_cutting}));
         dispatch(board,'set_requirements',{project_id:p.id,event_id:event+':coverage',requirements,source,source_revision:revision},now,actor);
         p.source_mappings ||= [];p.source_mappings.push(mappings);return save({imported,source_revision:revision,summary:summary(p)});
     }
@@ -302,7 +343,13 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
     }
     if (action === 'set_requirements') {
         owner(actor);
-        const requirements = z.array(z.object({ id, epic: str, phase: str, stories: z.array(id).max(200), source_path: z.string().max(1000).optional(), text: z.string().max(32000).optional(), source_revision: z.string().max(1000).optional() })).min(1).max(1000).parse(a.requirements);
+        const requirements = z.array(z.object({ id, epic: str, phase: str, stories: z.array(id).max(200), source_path: z.string().max(1000).optional(), text: z.string().max(32000).optional(), source_revision: z.string().max(1000).optional(), classification:z.enum(['reference','requirement']).optional(),cross_cutting:z.boolean().optional() })).min(1).max(1000).parse(a.requirements).map(r=>{
+            const prior=p.requirements.find((x:any)=>x.id===r.id);
+            // An unchanged legacy import cannot erase an audited classification repair.
+            if(prior?.mapping_history?.length && prior.text===r.text && prior.source_revision===a.source_revision && r.classification===undefined)
+                return {...r,classification:prior.classification,cross_cutting:prior.cross_cutting,stories:r.stories.length?r.stories:prior.stories};
+            return r;
+        });
         req(new Set(requirements.map(r => r.id)).size === requirements.length, 'Duplicate requirement IDs');
         const source = str.parse(a.source), revision = str.parse(a.source_revision);
         for (const r of requirements) {
@@ -324,7 +371,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         const missing = p.requirements.filter((r: any) => !requirements.some(x => x.id === r.id));
         p.requirement_history ||= [];
         p.requirement_history.push({ requirements: p.requirements, source: p.requirement_source, at: now.toISOString() });
-        p.requirements = requirements.map(r => ({ ...r, source_revision: revision }));
+        p.requirements = requirements.map(r => ({ ...r, mapping_history:p.requirements.find((x:any)=>x.id===r.id)?.mapping_history, source_revision: revision }));
         for (const r of missing)
             p.requirements.push({ ...r, stories: [], review_reason: 'Removed from source; explicit owner exclusion required' });
         p.requirement_source = { source, revision };
@@ -380,6 +427,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
             if (s.claim && commitValue && s.commit !== commitValue)
                 r.conflicts.push({ story: s.id, reason: 'Observed checkout differs from candidate' });
         }
+        (r as any).tracking_health = trackingHealth(p, now.getTime());
         p.reconciliations.push(r);
         return save(r);
     }

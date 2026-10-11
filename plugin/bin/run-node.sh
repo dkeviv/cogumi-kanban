@@ -26,5 +26,5 @@ for dir in "$HOME"/.nvm/versions/node/v*; do
   run "$dir/bin/node" "$@"
 done
 
-echo "Cogumi Claude Kanban needs Node.js 22.13 or newer. Install it (for example: brew install node) or set COGUMI_NODE to its path." >&2
+echo "Cogumi Kanban needs Node.js 22.13 or newer. Install it (for example: brew install node) or set COGUMI_NODE to its path." >&2
 exit 127

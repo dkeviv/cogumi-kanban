@@ -1,9 +1,9 @@
 {
-  "name": "cogumi-claude-kanban",
-  "version": "2.0.0",
+  "name": "cogumi-kanban",
+  "version": "2.3.2",
   "private": true,
   "type": "module",
-  "description": "Cogumi Claude Kanban: evidence-gated delivery tracker for Claude Code with a local SQLite database and an Artifact Kanban board.",
+  "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
   "engines": {
     "node": ">=22.13.0"
   },

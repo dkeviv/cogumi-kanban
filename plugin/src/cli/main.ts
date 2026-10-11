@@ -11,6 +11,8 @@ import { KanbanService } from '../server/service.ts';
 import { assertNodeVersion, databasePath, dataHome } from '../server/store.ts';
 import { observeBinding } from '../server/binding.ts';
 import { importBoard, exportBoard } from '../server/migrate.ts';
+import { updateBoard } from '../server/update-board.ts';
+import { serveLocalBoard } from '../server/local-board.ts';
 import { renderSnapshot } from '../server/snapshot.ts';
 
 const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -57,6 +59,26 @@ async function main(argv: string[]) {
                 console.log(JSON.stringify(result, null, 2));
                 return;
             }
+            case 'mode': {
+                const mode=args[0]; if(!['auto','approval'].includes(mode)) throw Error('Usage: mode auto|approval [--project ID] --reason TEXT');
+                const reason=flag(args,'--reason'); if(!reason)throw Error('Mode decision requires --reason with user authorization');
+                const observed=observeBinding();const matches=(await service.call('list_projects')).filter((p:any)=>(p.bindings||[p.binding]).includes(observed.binding));
+                const selected=flag(args,'--project');const project=selected?matches.find((p:any)=>p.id===selected):matches.length===1?matches[0]:null;
+                if(!project)throw Error('Binding must match exactly one selected project');
+                console.log(JSON.stringify(await service.call('set_delivery_mode',{project_id:project.id,event_id:crypto.randomUUID(),mode,reason}),null,2));return;
+            }
+            case 'update':
+                console.log(JSON.stringify(await updateBoard(service, flag(args, '--project')), null, 2));
+                return;
+            case 'board': {
+                const template = fs.readFileSync(path.join(pluginRoot, 'board', 'kanban-board.html'), 'utf8');
+                const board = await serveLocalBoard(template, { service });
+                console.log(JSON.stringify({ url: board.url, mode: 'local-live', read_only: true }));
+                const stop = () => board.server.close();
+                process.once('SIGINT', stop); process.once('SIGTERM', stop);
+                await new Promise<void>(resolve => board.server.once('close', resolve));
+                return;
+            }
             case 'snapshot': {
                 const template = fs.readFileSync(path.join(pluginRoot, 'board', 'kanban-board.html'), 'utf8');
                 let projectId = flag(args, '--project');
@@ -77,7 +99,7 @@ async function main(argv: string[]) {
                 return;
             }
             default:
-                throw Error('Usage: cli.mjs doctor | binding | export [--out FILE] | import FILE [--replace] | snapshot [--project ID] [--out FILE]');
+                throw Error('Usage: cli.mjs doctor | binding | update | board | export [--out FILE] | import FILE [--replace] | snapshot [--project ID] [--out FILE]');
         }
     } finally {
         service.close();

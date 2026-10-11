@@ -10,14 +10,14 @@ import { KanbanService, readOnlyTools } from '../src/server/service.ts';
 
 const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, params });
 
-test('initialize negotiates the protocol and carries Claude workflow instructions with resolved script paths', async () => {
+test('initialize negotiates the protocol and carries cross-host workflow instructions with resolved script paths', async () => {
     const handle = createHandler(new KanbanService(':memory:'), '/opt/plugin');
     const r = await handle(rpc(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } }));
     assert.equal(r.result.protocolVersion, '2025-06-18');
-    assert.equal(r.result.serverInfo.name, 'cogumi-claude-kanban');
-    assert.match(r.result.instructions, /Claude Code/);
+    assert.equal(r.result.serverInfo.name, 'cogumi-kanban');
+    assert.match(r.result.instructions, /Codex and Claude/);
     assert.match(r.result.instructions, /sh \/opt\/plugin\/bin\/kanban workflow/);
-    assert.doesNotMatch(r.result.instructions, /Codex|ChatGPT|Sites|<plugin>/);
+    assert.doesNotMatch(r.result.instructions, /ChatGPT|Sites|<plugin>/);
     const old = await handle(rpc(2, 'initialize', { protocolVersion: '1999-01-01' }));
     assert.equal(old.result.protocolVersion, SUPPORTED_PROTOCOLS[0]);
 });

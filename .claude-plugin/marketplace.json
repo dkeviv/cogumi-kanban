@@ -4,10 +4,10 @@
   "metadata": { "description": "Cogumi plugins for Claude Code" },
   "plugins": [
     {
-      "name": "cogumi-claude-kanban",
+      "name": "cogumi-kanban",
       "source": "./plugin",
       "description": "Evidence-gated delivery tracker with a local SQLite database and a live Kanban Artifact board.",
-      "version": "2.0.0"
+      "version": "2.3.2"
     }
   ]
 }

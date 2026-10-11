@@ -9,7 +9,7 @@ import { KanbanService } from '../src/server/service.ts';
 import { renderSnapshot } from '../src/server/snapshot.ts';
 import { A } from './helpers.mjs';
 
-const SERVER = 'host:plugin_cogumi-claude-kanban_kanban';
+const SERVER = 'host:plugin_cogumi-kanban_kanban';
 const template = await fs.readFile('board/kanban-board.html', 'utf8');
 const tick = (ms = 0) => new Promise(r => setTimeout(r, ms));
 
@@ -177,4 +177,41 @@ test('snapshot mode renders embedded data, is labeled, and never calls a server'
     assert.match(doc.getElementById('sheet').textContent, /This is a snapshot/);
     dom.window.close();
     service.close();
+});
+
+
+test('Codex loopback board renders local stories and refreshed changes without Claude capability', async () => {
+    const { serveLocalBoard } = await import('../src/server/local-board.ts');
+    const { service, p } = await tracker();
+    const board = await serveLocalBoard(template, { service });
+    const html = await (await fetch(board.url)).text();
+    const dom = new JSDOM(html, {
+        runScripts: 'dangerously', pretendToBeVisual: true, url: board.url,
+        beforeParse(window) { window.fetch = (url, options) => fetch(new URL(url, board.url), options); }
+    });
+    try {
+        await tick(100);
+        const doc = dom.window.document;
+        assert.match(doc.getElementById('columns').textContent, /Save profile/);
+        assert.match(doc.getElementById('status-text').textContent, /Live/);
+        await service.call('update_status', { project_id: p.id, story_id: 'S2', event_id: 'local-refresh', status: 'Backlog' });
+        doc.getElementById('refresh').click();
+        await tick(100);
+        assert.match(doc.getElementById('columns').textContent, /Later/);
+        const card = doc.querySelector('[data-story-id]');
+        // The local transport must expose no write route.
+        assert.equal((await fetch(board.url + 'api/request_rework')).status, 404);
+    } finally { dom.window.close(); await new Promise(resolve => board.server.close(resolve)); }
+});
+
+test('board surfaces tracking gaps separately from lifecycle completion', async () => {
+ const { service } = await tracker();
+ const calls=[],failures={}; const mcp=fakeMcp(service,calls,failures);
+ const dom=await load(template,{claude:{use:async()=>mcp.api}});
+ try {
+  await tick(30);
+  assert.match(dom.window.document.getElementById('notice').textContent,/tracking gaps/);
+  assert.match(dom.window.document.getElementById('columns').textContent,/No recorded checks/);
+  assert.match(dom.window.document.title || template,/Cogumi Kanban/);
+ } finally {dom.window.close();service.close();}
 });

@@ -9,5 +9,5 @@ try {
     const out = await runHook(raw);
     if (out) process.stdout.write(out);
 } catch (e) {
-    process.stderr.write(`cogumi-claude-kanban hook: ${(e as Error).message}\n`);
+    process.stderr.write(`cogumi-kanban hook: ${(e as Error).message}\n`);
 }

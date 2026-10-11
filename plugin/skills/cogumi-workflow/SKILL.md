@@ -1,24 +1,24 @@
 ---
 name: cogumi-workflow
-description: Delivery workflow for Cogumi Claude Kanban. Use whenever working in a repository bound to a Cogumi project, when the user asks to track work on the Kanban board, claim or ship a story, run checks with evidence, record a release, report rework, import a plan or OpenSpec change, or resume interrupted work.
+description: Delivery workflow for Cogumi Kanban. Use whenever working in a repository bound to a Cogumi project, when the user asks to track work on the Kanban board, claim or ship a story, run checks with evidence, record a release, report rework, import a plan or OpenSpec change, or resume interrupted work.
 ---
 
-# Cogumi Claude Kanban workflow
+# Cogumi Kanban workflow
 
-The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_cogumi-claude-kanban_kanban__*`). Records live in a local SQLite database under `~/.cogumi-claude-kanban/`. The full rules are the server's instructions (call the `workflow` tool if they are not in context). This skill is the operating checklist.
+The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_cogumi-kanban_kanban__*`). Records live in a local SQLite database under the resolved data home (`~/.cogumi-kanban/` for new installs; existing installations retain their legacy data home to preserve active workers). The full rules are the server's instructions (call the `workflow` tool if they are not in context). This skill is the operating checklist.
 
 ## Non-negotiables
 
 - Never mark work complete on a summary. Ready to ship and Shipped are gates the engine enforces from registered runs, evidence and releases.
 - Claim before editing code. Record the exact candidate commit with `set_commit`.
-- Tools whose description starts with `OWNER` change scope or authority. Call them only after the user approved that exact decision in this conversation, and quote the approval in `reason`.
+- OWNER operations require the relevant user authorization. A recorded Auto decision authorizes routine queue transitions and proof-plan preparation for unchanged approved criteria; quote that decision in reason. New scope/criteria, phase or environment expansion, exclusions, waivers and claim takeover still require approval for that exact decision. Do not ask again for unchanged routine work already authorized by Auto.
 - Never invent URLs, release versions, test outcomes or pending counts. Observe them.
 - User feedback beats a green test. If the user says it is still incomplete, use `request_rework`.
-- Write nothing tracker-related into the product checkout. Reporter configs and provider result files go under `~/.cogumi-claude-kanban/configs/` (or the scratchpad).
+- Write nothing tracker-related into the product checkout. Reporter configs and provider result files go under the resolved data home’s `configs/` directory (or the scratchpad).
 
 ## 1. Resolve the project
 
-1. `sh <plugin>/bin/kanban workflow binding`. `<plugin>` is the plugin directory: the SessionStart hook prints it, and the `workflow` MCP tool returns instructions with it filled in (or use `/cogumi-claude-kanban:start`).
+1. `sh <plugin>/bin/kanban workflow binding`. `<plugin>` is the plugin directory: the SessionStart hook prints it, and the `workflow` MCP tool returns instructions with it filled in (or use `/cogumi-kanban:start`).
 2. `resolve_project` with that binding. If none matches, `list_projects`; if the user confirms a new project, `create_project` (strict checks default on). If several match, ask.
 3. `board_overview` for a compact view; `get_board` only when full records are needed.
 
@@ -48,7 +48,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
   "command": ["npm", "test", "--", "checks/S1.test.mjs"],
   "criteria": [0, 1], "verification_types": ["api"], "check_ids": ["S1-api"],
   "mocked": false, "timeout_ms": 300000,
-  "assertion_file": "/Users/<you>/.cogumi-claude-kanban/configs/S1-assertions.json",
+  "assertion_file": "/Users/<you>/.cogumi-kanban/configs/S1-assertions.json",
   "artifact": "https://ci.example.com/runs/42/trace.zip"
 }
 ```
@@ -90,5 +90,25 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 
 ## Board
 
-- `/cogumi-claude-kanban:board` publishes the live Artifact board (Claude desktop app only).
-- `/cogumi-claude-kanban:snapshot` writes a static HTML snapshot locally.
+- `/cogumi-kanban:open` opens the live board and detects Codex or Claude automatically; `/cogumi-kanban:board` is an alias.
+- `/cogumi-kanban:snapshot` writes a static HTML snapshot locally.
+
+## Codex live board
+
+In Codex, start `sh <plugin>/bin/kanban cli board` as a persistent terminal process. Read the actual returned URL and open it with `mcp__codex_app__open_in_codex` using a browser target. Do this when starting tracked project work or when the user asks to see the board. Keep the process running while the board is open. It reads the same local SQLite database and refreshes automatically. The browser board is read-only; record rework through the local tracker in chat. Never switch to a separately connected hosted Cogumi service for this local workflow. If no browser opener is available, return the observed URL.
+
+## Mandatory progress capture and on-demand update
+
+Run `sh <plugin>/bin/kanban cli update` in the bound repository at session start, before switching stories, after a blocker, and before any user-facing progress/completion report. Resolve warnings; expired claims mean interruption, not active work. Use `/cogumi-kanban:update` or “Update Cogumi Kanban” on demand. The update observes Git, queues and proof files, persists reconciliation, and never invents proof. Record blockers promptly with their reason, next action and dependency.
+
+Use `workflow test CONFIG` for every reviewed proof command, even while implementing. It records started runs, renews claims during execution, journals outcomes before delivery and replays durable stable-ID events during verified recovery. Do not use direct test commands as completion evidence. Ordinary edits and commands outside the runner cannot be intercepted; report them as unverified until a recorded check on the exact clean commit qualifies. Implementation, registered checks, accepted proof and actual release are separate milestones. Never mark Shipped without all existing gates.
+
+## Delivery modes
+
+The project explicitly selects Auto or Approval with `set_delivery_mode` (or `/cogumi-kanban:mode auto|approval`). Preserve existing phase/environment authorization. A user's Auto request authorizes routine transitions and execution across all epics within that scope; do not ask again per story or epic. In Auto, approve_scope/import/reconcile and story closure automatically prepare the queue: eligible approved Draft stories enter Backlog; existing Ready gates determine promotion. Source changes, pending proposals, future phases, dependencies and missing plans remain visible. Approval is the default for existing projects until a mode decision is supplied. It requires review of queue transitions rather than automatic promotion.
+
+When working in Auto, keep executing the next eligible story after closing each one: update/reconcile, next_story, claim, implement, tracked checks, actual release and deployed acceptance, before-close, Shipped, then the next epic/story. Stop for a real blocker, unsupported host acceptance, user input that is required, or exhausted eligible scope. Do not stop merely to request permission for unchanged approved work. Auto mode does not launch an independent background worker, bypass evidence, recover another worker's claim, or approve future phases.
+
+## Source classification and cross-cutting traceability
+
+Classify titles/version/owner metadata as `reference` before import; retain original text and provenance. Register actual obligations as `requirement`. Use `cross_cutting:true` for requirements applying to stories across epics/phases. Map each actual requirement to the stories whose acceptance plans cover it; keep uncertain mappings visibly unmapped. Never manufacture a story for a document heading or drop a real obligation to improve completion counts. `classify_requirements` repairs existing classification/mappings with an audited reason and retained history, without changing acceptance criteria, source text or claiming implementation. Criteria changes still require revise_story and invalidate proof.

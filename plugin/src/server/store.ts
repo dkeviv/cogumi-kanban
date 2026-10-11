@@ -9,7 +9,11 @@ import path from 'node:path';
 export const SCHEMA_VERSION = 1;
 
 export function dataHome(): string {
-    return path.resolve(process.env.COGUMI_KANBAN_HOME || path.join(os.homedir(), '.cogumi-claude-kanban'));
+    if (process.env.COGUMI_KANBAN_HOME) return path.resolve(process.env.COGUMI_KANBAN_HOME);
+    const current = path.join(os.homedir(), '.cogumi-kanban');
+    const legacy = path.join(os.homedir(), '.cogumi-claude-kanban');
+    // Existing workers may still use the legacy path. Never create a second board.
+    return fs.existsSync(legacy) ? legacy : current;
 }
 
 export function databasePath(): string {
@@ -19,7 +23,7 @@ export function databasePath(): string {
 export function assertNodeVersion(version = process.versions.node) {
     const [major, minor] = version.split('.').map(Number);
     if (major < 22 || (major === 22 && minor < 13))
-        throw Error(`Cogumi Claude Kanban requires Node.js 22.13 or newer (found ${version})`);
+        throw Error(`Cogumi Kanban requires Node.js 22.13 or newer (found ${version})`);
 }
 
 export type Statement = { bind(...values: unknown[]): Statement; first(): Promise<any>; run(): Promise<{ meta: { changes: number } }> };

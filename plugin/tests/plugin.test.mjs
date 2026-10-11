@@ -12,7 +12,7 @@ test('plugin and marketplace manifests are valid and agree', async () => {
     const plugin = await json('.claude-plugin/plugin.json');
     const market = await json('../.claude-plugin/marketplace.json');
     const pkg = await json('package.json');
-    assert.equal(plugin.name, 'cogumi-claude-kanban');
+    assert.equal(plugin.name, 'cogumi-kanban');
     assert.equal(market.name, 'cogumi');
     const entry = market.plugins.find(p => p.name === plugin.name);
     assert.equal(entry.source, './plugin');
@@ -41,7 +41,7 @@ test('skill and commands have frontmatter and reference only existing plugin fil
         for (const ref of text.match(/\$\{CLAUDE_PLUGIN_ROOT\}\/[\w./-]+/g) || []) await fs.access(ref.replace('${CLAUDE_PLUGIN_ROOT}', '.'));
     }
     // Only the import command may talk about the ChatGPT edition.
-    for (const text of [skill, ...await Promise.all(commands.filter(n => n !== 'import-chatgpt.md').map(n => read(path.join('commands', n))))]) assert.doesNotMatch(text, /Codex|ChatGPT|Sites|\.openai/);
+    for (const text of [skill, ...await Promise.all(commands.filter(n => n !== 'import-chatgpt.md').map(n => read(path.join('commands', n))))]) assert.doesNotMatch(text, /ChatGPT|Sites|\.openai/);
 });
 
 test('board command manifest names exactly the tools the board page calls', async () => {
@@ -52,7 +52,7 @@ test('board command manifest names exactly the tools the board page calls', asyn
     assert.deepEqual([...called].sort(), [...declared].sort());
     assert.match(board, /const SERVER = "__COGUMI_MCP_SERVER__"/);
     assert.match(board, /<!--COGUMI_SNAPSHOT-->/);
-    assert.match(board, /^<title>Cogumi Claude Kanban<\/title>/);
+    assert.match(board, /^<title>Cogumi Kanban<\/title>/);
 });
 
 test('bundled dist is current with the sources', () => {

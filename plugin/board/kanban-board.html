@@ -1,4 +1,4 @@
-<title>Cogumi Claude Kanban</title>
+<title>Cogumi Kanban</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -113,8 +113,8 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
 <div class="wrap">
   <header class="top">
     <div class="title-block">
-      <span class="label">Cogumi Claude Kanban</span>
-      <h1 id="project-name">Delivery board</h1>
+      <span class="label">Cogumi Kanban</span>
+      <h1 id="project-name">Delivery board</h1><span id="delivery-mode" class="muted"></span>
       <div class="status" id="status"><span class="dot" id="status-dot"></span><span id="status-text">Connecting to the local tracker…</span></div>
     </div>
     <div class="controls">
@@ -146,7 +146,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
 
 <script>
 (() => {
-  // Filled in by /cogumi-claude-kanban:board from this session's tool names.
+  // Filled in by /cogumi-kanban:board from this session's tool names.
   const SERVER = "__COGUMI_MCP_SERVER__";
   const STATES = ["Draft", "Backlog", "Ready", "Implementing", "Verifying", "Ready to ship", "Shipped", "Blocked", "Needs rework"];
   const REFETCH_MS = 15000;
@@ -194,7 +194,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     if (body) n.append(body instanceof Node ? body : el("span", {}, body));
     n.hidden = false;
   }
-  const noHost = () => el("span", {}, "This board reads the Cogumi Claude Kanban server on your machine, which only works inside the Claude desktop app with the plugin installed and its server running. For a static copy, run ", el("code", {}, "/cogumi-claude-kanban:snapshot"), " in Claude Code.");
+  const noHost = () => el("span", {}, "This board reads the Cogumi Kanban server on your machine, which only works inside the Claude desktop app with the plugin installed and its server running. For a static copy, run ", el("code", {}, "/cogumi-kanban:snapshot"), " in Claude Code.");
 
   // ---- rendering ----------------------------------------------------------
   function renderProjects() {
@@ -210,11 +210,12 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     const ov = state.overview;
     if (!ov) return;
     $("project-name").textContent = ov.project.name;
+    $("delivery-mode").textContent = `Mode: ${ov.project.delivery_mode === "auto" ? "Auto · approved queue advances automatically" : "Approval · agent reviews queue transitions"}. Change with /cogumi-kanban:mode auto or approval.`;
     fillSelect("phase-select", ov.phases, state.phase, "All phases");
     fillSelect("epic-select", ov.epics, state.epic, "All epics");
     const sum = ov.summary || { epics: [], unmapped: [] };
     const cov = ov.coverage || { unmapped: [], excluded: [] };
-    $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") + (cov.source ? ` · ${cov.source.source} @ ${cov.source.revision}` : "") : "Requirement coverage not registered";
+    $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") + (cov.references?.length ? ` · ${cov.references.length} reference entries` : "") + (cov.source ? ` · ${cov.source.source} @ ${cov.source.revision}` : "") : "Requirement coverage not registered";
     $("unmapped").replaceChildren(...cov.unmapped.map(r => el("li", {}, el("span", { class: "mono" }, r.id), ` ${r.epic} · ${r.phase}`, r.text ? ` · ${r.text}` : "", r.review_reason ? el("span", { class: "why" }, ` (${r.review_reason})`) : "", r.source_revision ? el("span", { class: "muted" }, ` · rev ${r.source_revision}`) : "")));
     $("unmapped-block").hidden = !cov.unmapped.length;
     const epics = sum.epics.filter(e => !state.epic || e.epic === state.epic);
@@ -232,6 +233,8 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
         e.remaining.length ? el("div", { class: "muted", style: "font-size:.76rem" }, "Remaining: " + e.remaining.map(r => `${r.id} (${r.status})`).join(", ")) : null,
         e.excluded.length ? el("div", { class: "muted", style: "font-size:.76rem" }, "Excluded: " + e.excluded.map(x => `${x.id}${x.deferred_to ? ` → ${x.deferred_to}` : ""}`).join(", ")) : null);
     }) : [el("div", { class: "epic" }, el("span", { class: "muted" }, "No stories in this phase yet. Import a plan or propose intake from Claude Code."))]));
+    const warnings = ov.tracking_health?.issues || [];
+    if (warnings.length) showNotice("warn", `${warnings.length} tracking gaps`, warnings.slice(0, 6).map(x => `${x.story_id}: ${x.message}`).join(" ") + (warnings.length > 6 ? ` ${warnings.length - 6} more — inspect story details or run the update command.` : ""));
     const q = state.query.toLowerCase();
     const visible = ov.stories.filter(s => (!state.epic || s.epic === state.epic) && (!q || [s.id, s.title, s.epic].join(" ").toLowerCase().includes(q)));
     $("columns").replaceChildren(...STATES.map(st => {
@@ -252,6 +255,8 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
         s.eligible_next ? el("span", { class: "chip pending" }, "Next eligible") : null,
         proof,
         s.claim ? el("span", { class: s.claim.expired ? "chip blocked" : "chip" }, (s.claim.expired ? "Stale claim: " : "Claimed: ") + s.claim.worker) : null,
+        (state.overview.tracking_health?.issues || []).some(x => x.story_id === s.id && x.code === "evidence_missing") ? el("span", { class: "chip pending" }, "No recorded checks") : null,
+        (state.overview.tracking_health?.issues || []).some(x => x.story_id === s.id && x.code === "outcome_unknown") ? el("span", { class: "chip blocked" }, "Outcome unknown") : null,
         s.open_rework ? el("span", { class: "chip fail" }, `${s.open_rework} rework`) : null,
         s.proposal_pending ? el("span", { class: "chip pending" }, "Proposed") : null,
         s.excluded ? el("span", { class: "chip waived" }, "Excluded") : null),
@@ -354,6 +359,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
 
   function reworkForm(d) {
     if (snapshot) return el("p", { class: "muted" }, "This is a snapshot. Report rework from the live board or ask Claude in chat.");
+    if (window.COGUMI_LOCAL_BOARD) return el("p", { class: "muted" }, "Report rework in chat using the local tracker.");
     const msg = el("span", { class: "muted", role: "status" });
     // One event ID per report: resending after an unclear failure can never file it twice.
     let eventId = crypto.randomUUID();
@@ -394,7 +400,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
   function explain(e) {
     switch (e?.code) {
       case "server_not_connected": return "The local tracker is not reachable from this view.";
-      case "not_in_manifest": return "This board is not allowed to use that tracker tool. Republish it with /cogumi-claude-kanban:board.";
+      case "not_in_manifest": return "This board is not allowed to use that tracker tool. Republish it with /cogumi-kanban:board.";
       case "approval_required": return "The Claude app needs your approval for this request.";
       case "server_unavailable": return "The local tracker did not answer in time.";
       case "tool_error": return e.message || "The tracker refused the request.";
@@ -519,8 +525,33 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
       renderProjects();
       $("refresh").disabled = true;
       setStatus("stale", `Snapshot captured ${when(snapshot.captured_at)} · not live`);
-      showNotice("warn", "Static snapshot", "This copy does not update. Run /cogumi-claude-kanban:snapshot again for newer data, or open the live board in the Claude desktop app.");
+      showNotice("warn", "Static snapshot", "This copy does not update. Run /cogumi-kanban:snapshot again for newer data, or open the live board in the Claude desktop app.");
       renderBoard();
+      return;
+    }
+    if (window.COGUMI_LOCAL_BOARD) {
+      state.mcp = {
+        async callTool(_server, tool, input) {
+          const response = await fetch(`api/${tool}?${new URLSearchParams(input)}`, { cache: "no-store" });
+          const data = await response.json();
+          if (!response.ok) throw { code: "tool_error", message: data.message };
+          return data;
+        },
+        watchTool(server, tool, input, callback, options) {
+          let stopped = false, running = false;
+          const refresh = async () => {
+            if (running || stopped) return;
+            running = true;
+            try { const result = await this.callTool(server, tool, input); if (!stopped) callback({ type: "data", result }); }
+            catch (error) { if (!stopped) callback({ type: "error", error }); }
+            finally { running = false; }
+          };
+          refresh();
+          const timer = setInterval(refresh, options.refetchInterval);
+          return () => { stopped = true; clearInterval(timer); };
+        }
+      };
+      try { await loadProjects(); } catch (e) { handleError(e); }
       return;
     }
     if (!window.claude?.use) { setStatus("off", "Not connected"); showNotice("err", "Open this board in Claude", noHost()); return; }

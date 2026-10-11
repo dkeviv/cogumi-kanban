@@ -8,6 +8,27 @@ var __export = (target, all) => {
 // src/server/reporter.ts
 import fs2 from "node:fs";
 
+// src/engine/tracking-health.ts
+function trackingHealth(project, now = Date.now()) {
+  const issues = [];
+  for (const s3 of project.stories) {
+    if (s3.exclusion || s3.proposal_pending || ["Draft", "Backlog", "Ready"].includes(s3.status)) continue;
+    const add = (code, message) => issues.push({ story_id: s3.id, code, message });
+    if (s3.claim && Date.parse(s3.claim.expires) <= now) add("expired_claim", "Interrupted: claim expired; reconcile with the worker before recovery.");
+    const runs = (s3.runs || []).filter((r) => r.attempt_id === s3.attempt_id && r.generation === s3.generation && r.criterion_revision === s3.revision);
+    const evidence = (s3.evidence || []).filter((e) => runs.some((r) => r.id === e.run_id));
+    if (!s3.commit) add("candidate_missing", "No exact candidate commit recorded.");
+    if (!runs.length) add("evidence_missing", "No checks registered for the current attempt; implementation is unverified.");
+    for (const r of runs) if (!evidence.some((e) => e.run_id === r.id)) add("outcome_unknown", `Run ${r.id} started but has no recorded result; inspect the journal before replay.`);
+    if (runs.some((r) => r.dirty) || evidence.some((e) => e.dirty)) add("dirty_evidence", "Checks used uncommitted changes; rerun against the exact clean candidate.");
+    if (runs.some((r) => s3.commit && r.commit !== s3.commit)) add("outdated_evidence", "Recorded checks target a different candidate commit.");
+    if (["Verifying", "Ready to ship", "Shipped"].includes(s3.status) && !(s3.releases || []).some((r) => r.attempt_id === s3.attempt_id && r.commit === s3.commit && r.result === "succeeded")) add("release_pending", "No matching successful release recorded.");
+    if (s3.report_health?.pending_events) add("pending_reports", `${s3.report_health.pending_events} result events awaiting delivery.`);
+    if (s3.report_health?.delivery_error) add("delivery_error", "Result delivery failed; inspect and replay the durable outbox.");
+  }
+  return { issues, healthy: issues.length === 0, limitation: "Direct commands outside the tracked runner are not intercepted. No recorded proof means unverified." };
+}
+
 // node_modules/zod/v3/external.js
 var external_exports = {};
 __export(external_exports, {
@@ -4091,7 +4112,7 @@ function assertCredentialFree(value) {
 }
 
 // src/engine/workflow-guide.ts
-var workflowGuide = `You are using Cogumi Claude Kanban, the project delivery workflow for Claude Code. All records live in a local SQLite database on this machine. Use one persistent project across Claude sessions. Installing this plugin does not start or keep a worker alive.
+var workflowGuide = `You are using Cogumi Kanban, the project delivery workflow for Codex and Claude. All records live in a local SQLite database on this machine. Use one persistent project across sessions. Installing this plugin does not start or keep a worker alive.
 
 INTAKE: For an informal request, extract the user's goal, included/excluded scope, one small story or useful epic groups, and observable acceptance criteria. Use propose_intake to retain the original request, goal, stable story IDs and version. Show the proposal. Respect approval already given in the conversation; decide_intake records the decision without asking again for unchanged authorized work. Ambiguous/additional work remains a proposal outside execution. For existing requirements, use revise_story with the original request and rationale; do not silently add scope. No separate coach or extra LLM service is needed.
 
@@ -4111,9 +4132,14 @@ REWORK: request_rework retains observed/expected behavior, reproduction and clas
 
 OPENSPEC: Verify installed format/version first. Git files remain specification authority; use explicit stable requirement/scenario/task/change/path/revision mappings. Reimports preview additions/changes/removals, preserve mapping history and require owner review; checked tasks/archive signals never imply Shipped. Source changes go through the OpenSpec workflow; board writes do not rewrite specifications.
 
-BOARD: The Kanban board is a Claude Artifact published with /cogumi-claude-kanban:board; it reads this server live and only works in the Claude desktop app on this machine. /cogumi-claude-kanban:snapshot writes a static, clearly labeled snapshot instead.
+BOARD: In Codex start "sh <plugin>/bin/kanban cli board" as a persistent process and open its actual returned loopback URL with open_in_codex (browser target). It uses the local database and refreshes automatically. The view is read-only; record rework in chat. Never switch to the separately hosted service. In Claude Desktop the board is a Claude Artifact published with /cogumi-kanban:board; it reads this server live and only works in the Claude desktop app on this machine. /cogumi-kanban:snapshot writes a static, clearly labeled snapshot instead.
 
-FINISH: Read full phase coverage/epic summary, not filtered cards. Inspect current criteria/proof/releases, capture baseline/project_metrics and reconcile. Report saved mutations and remaining blockers accurately. No periodic scheduler or worker restart is implemented; those are later scope.`;
+PROGRESS CAPTURE: Run "sh <plugin>/bin/kanban cli update" at session start, before switching stories, after blockers and before progress reports. The /cogumi-kanban:update command invokes it on demand. It persists reconciliation and checks Git, queues and missing proof files. Direct tests are untracked and cannot qualify; use workflow test CONFIG, which journals start/result, heartbeats and durable delivery. Never infer a pass from missing output or recover another active worker. Record blockers promptly.
+
+FINISH: Read full phase coverage/epic summary, not filtered cards. Inspect current criteria/proof/releases, capture baseline/project_metrics and reconcile. Report saved mutations and remaining blockers accurately. No periodic scheduler or worker restart is implemented; those are later scope.
+DELIVERY MODE: Inspect project.workflow.delivery_mode (default approval). Auto is an explicit user authorization to continue routine planning, Backlog/Ready preparation and delivery across all epics in already approved phases/environments without asking per story/epic. Prepare missing proof plans for unchanged approved criteria, reconcile, next_story, claim, implement, tracked checks, real release/deployed checks, before-close, Shipped, then continue next eligible story. Queue promotion is automatic on imports/scope approval/reconciliation/closure. Do not stop just because an epic ended. Stop for real blockers or exhausted approved scope; Auto is not a separate background worker. New criteria/scope, future phases, exclusions, waivers and taking over another worker still require their owner decision. Approval mode retains reviewed manual queue transitions. Both modes retain all proof gates.
+SOURCE INVENTORY: Retain title/version/owner metadata as reference classification; retain actual obligations as requirements. Cross-cutting requirements may map across epics/phases. Classify and map with source provenance; uncertain mappings remain visibly unmapped. classify_requirements repairs metadata/traceability without deleting source or certifying implementation. Never remove real requirements to improve counters.
+`;
 
 // src/engine/engine.ts
 var states = ["Draft", "Backlog", "Ready", "Implementing", "Verifying", "Ready to ship", "Shipped", "Blocked", "Needs rework"];
@@ -4270,12 +4296,12 @@ function invalidate(p, s3) {
   }
 }
 function summary(p, phase) {
-  const rs = p.requirements.filter((r) => !phase || r.phase === phase);
-  const unmapped = rs.filter((r) => !r.exclusion && (!r.stories.length || r.stories.some((id2) => !p.stories.some((s3) => s3.id === id2 && s3.phase === r.phase && s3.epic === r.epic)))).map((r) => r.id);
+  const rs = p.requirements.filter((r) => r.classification !== "reference" && (!phase || r.phase === phase));
+  const unmapped = rs.filter((r) => !r.exclusion && (!r.stories.length || r.stories.some((id2) => !p.stories.some((s3) => s3.id === id2 && (r.cross_cutting || s3.phase === r.phase && s3.epic === r.epic))))).map((r) => r.id);
   const ss = p.stories.filter((s3) => !phase || s3.phase === phase);
-  const epics = [.../* @__PURE__ */ new Set([...ss.map((s3) => s3.epic), ...rs.map((r) => r.epic)])].map((epic) => {
+  const epics = [.../* @__PURE__ */ new Set([...ss.map((s3) => s3.epic), ...rs.filter((r) => !r.cross_cutting || !r.stories.length).map((r) => r.epic)])].map((epic) => {
     const children = ss.filter((s3) => s3.epic === epic && !s3.exclusion && !s3.proposal_pending);
-    const reqs = rs.filter((r) => r.epic === epic);
+    const reqs = rs.filter((r) => r.epic === epic || r.cross_cutting && r.stories.some((id2) => children.some((s3) => s3.id === id2)));
     const unresolved = reqs.filter((r) => unmapped.includes(r.id));
     const orphan = children.filter((s3) => !reqs.some((r) => r.stories.includes(s3.id)));
     const shipped = children.filter((s3) => s3.status === "Shipped" && eligibility(p, s3).deployed);
@@ -4359,7 +4385,28 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     return { duplicate: true, event_id: event, result: p.eventRecords[event].result };
   }
   req(!p.events.includes(event), "Legacy event ID has no replayable payload; reconcile before reusing it");
+  const advanceQueue = () => {
+    const backlog = [], ready = [], waiting = [];
+    for (const story2 of p.stories) {
+      if (!p.approval?.phases.includes(story2.phase) || story2.exclusion || story2.proposal_pending || story2.source_review) continue;
+      const change = (status) => dispatch(board, "update_status", { project_id: p.id, story_id: story2.id, event_id: `${event}:queue:${story2.id}:${status}`, status, reason: "Auto mode: advance unchanged approved scope through existing lifecycle gates" }, now, actor);
+      if (story2.status === "Draft") {
+        change("Backlog");
+        backlog.push(story2.id);
+      }
+      if (story2.status === "Backlog") {
+        try {
+          change("Ready");
+          ready.push(story2.id);
+        } catch (error) {
+          waiting.push({ story_id: story2.id, reason: error.message });
+        }
+      }
+    }
+    return { backlog, ready, waiting };
+  };
   const save = (result, s3, data = {}) => {
+    if (p.workflow.delivery_mode === "auto" && (["approve_scope", "import_stories", "reconcile"].includes(action) || action === "update_status" && a.status === "Shipped")) advanceQueue();
     const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
     p.audit.push(audit);
     if (s3) {
@@ -4371,6 +4418,37 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     p.eventRecords[event] = { payload, result: JSON.parse(JSON.stringify(s3 === result ? { id: s3.id, version: s3.version, status: s3.status } : result)) };
     return result;
   };
+  if (action === "set_delivery_mode") {
+    owner(actor);
+    const mode = external_exports.enum(["auto", "approval"]).parse(a.mode);
+    str.parse(a.reason);
+    p.workflow.delivery_mode = mode;
+    p.workflow.mode_decision = { mode, reason: a.reason, actor: actor.id, at: now.toISOString() };
+    return save({ mode, queue: mode === "auto" ? advanceQueue() : { backlog: [], ready: [], waiting: [] } });
+  }
+  if (action === "advance_queue") {
+    owner(actor);
+    req(p.workflow.delivery_mode === "auto", "Queue automation requires Auto mode");
+    return save(advanceQueue());
+  }
+  if (action === "classify_requirements") {
+    owner(actor);
+    str.parse(a.reason);
+    const entries = external_exports.array(external_exports.object({ id, classification: external_exports.enum(["reference", "requirement"]), stories: external_exports.array(id), cross_cutting: external_exports.boolean() })).min(1).max(1e3).parse(a.entries);
+    req(new Set(entries.map((x) => x.id)).size === entries.length, "Duplicate classification IDs");
+    for (const entry of entries) {
+      req(p.requirements.some((r) => r.id === entry.id), "Requirement not found: " + entry.id);
+      req(entry.classification !== "reference" || entry.stories.length === 0, "Reference material cannot map to delivery stories");
+      req(entry.stories.every((storyId) => p.stories.some((s3) => s3.id === storyId)), "Unknown mapped story");
+    }
+    for (const entry of entries) {
+      const r = p.requirements.find((r2) => r2.id === entry.id);
+      r.mapping_history ||= [];
+      r.mapping_history.push({ stories: r.stories, classification: r.classification || "requirement", cross_cutting: !!r.cross_cutting, at: now.toISOString(), actor: actor.id, reason: a.reason });
+      Object.assign(r, { classification: entry.classification, stories: entry.stories, cross_cutting: entry.cross_cutting });
+    }
+    return save({ classified: entries.length, summary: summary(p) });
+  }
   if (action === "add_binding") {
     owner(actor);
     const binding = str.parse(a.binding);
@@ -4431,7 +4509,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     assertCredentialFree(mappings);
     let imported = { added: 0, changed: 0, unchanged: 0 };
     if (bundle.stories.length) imported = dispatch(board, "import_stories", { project_id: p.id, event_id: event + ":stories", stories: bundle.stories, source, source_revision: revision, reason: a.reason }, now, actor);
-    const requirements = bundle.requirements.map((r) => ({ id: r.id, epic: r.epic, phase: r.phase, stories: r.stories, text: r.text, source_path: r.source_path, source_revision: revision }));
+    const requirements = bundle.requirements.map((r) => ({ id: r.id, epic: r.epic, phase: r.phase, stories: r.stories, text: r.text, source_path: r.source_path, source_revision: revision, classification: r.classification, cross_cutting: r.cross_cutting }));
     dispatch(board, "set_requirements", { project_id: p.id, event_id: event + ":coverage", requirements, source, source_revision: revision }, now, actor);
     p.source_mappings ||= [];
     p.source_mappings.push(mappings);
@@ -4496,7 +4574,12 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   }
   if (action === "set_requirements") {
     owner(actor);
-    const requirements = external_exports.array(external_exports.object({ id, epic: str, phase: str, stories: external_exports.array(id).max(200), source_path: external_exports.string().max(1e3).optional(), text: external_exports.string().max(32e3).optional(), source_revision: external_exports.string().max(1e3).optional() })).min(1).max(1e3).parse(a.requirements);
+    const requirements = external_exports.array(external_exports.object({ id, epic: str, phase: str, stories: external_exports.array(id).max(200), source_path: external_exports.string().max(1e3).optional(), text: external_exports.string().max(32e3).optional(), source_revision: external_exports.string().max(1e3).optional(), classification: external_exports.enum(["reference", "requirement"]).optional(), cross_cutting: external_exports.boolean().optional() })).min(1).max(1e3).parse(a.requirements).map((r) => {
+      const prior = p.requirements.find((x) => x.id === r.id);
+      if (prior?.mapping_history?.length && prior.text === r.text && prior.source_revision === a.source_revision && r.classification === void 0)
+        return { ...r, classification: prior.classification, cross_cutting: prior.cross_cutting, stories: r.stories.length ? r.stories : prior.stories };
+      return r;
+    });
     req(new Set(requirements.map((r) => r.id)).size === requirements.length, "Duplicate requirement IDs");
     const source = str.parse(a.source), revision = str.parse(a.source_revision);
     for (const r of requirements) {
@@ -4518,7 +4601,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const missing = p.requirements.filter((r) => !requirements.some((x) => x.id === r.id));
     p.requirement_history ||= [];
     p.requirement_history.push({ requirements: p.requirements, source: p.requirement_source, at: now.toISOString() });
-    p.requirements = requirements.map((r) => ({ ...r, source_revision: revision }));
+    p.requirements = requirements.map((r) => ({ ...r, mapping_history: p.requirements.find((x) => x.id === r.id)?.mapping_history, source_revision: revision }));
     for (const r of missing)
       p.requirements.push({ ...r, stories: [], review_reason: "Removed from source; explicit owner exclusion required" });
     p.requirement_source = { source, revision };
@@ -4573,6 +4656,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       if (s3.claim && commitValue && s3.commit !== commitValue)
         r.conflicts.push({ story: s3.id, reason: "Observed checkout differs from candidate" });
     }
+    r.tracking_health = trackingHealth(p, now.getTime());
     p.reconciliations.push(r);
     return save(r);
   }
@@ -4956,8 +5040,11 @@ var specs = {
   next_story: { description: "Get highest priority eligible story in approved phase.", fields: { project_id: s, phase: s }, required: ["project_id"] },
   preview_import: { description: "Preview source additions/changes; retained omitted stories need owner review.", fields: { project_id: s, stories: array(story) }, required: ["project_id", "stories"] },
   import_stories: { description: "Reconcile stable IDs; changed source creates Draft revision and invalidates proof.", fields: { project_id: s, event_id: s, stories: array(story), source: s, source_revision: s, reason: s }, required: ["project_id", "event_id", "stories"] },
+  set_delivery_mode: { description: "OWNER: choose Auto or Approval mode. Auto prepares unchanged approved scope across epics, retaining all proof/release gates; not a background worker.", fields: { project_id: s, event_id: s, mode: { enum: ["auto", "approval"] }, reason: s }, required: ["project_id", "event_id", "mode", "reason"] },
+  advance_queue: { description: "Advance approved Auto-mode stories to Backlog and gate eligible work to Ready; return waiting reasons.", fields: { project_id: s, event_id: s }, required: ["project_id", "event_id"] },
+  classify_requirements: { description: "OWNER: repair source classification and traceability without deleting source text. Reference material is not a completion obligation; cross-cutting requirements may map across epics/phases. Does not certify implementation or change acceptance criteria.", fields: { project_id: s, event_id: s, reason: s, entries: array({ type: "object", properties: { id: s, classification: { enum: ["reference", "requirement"] }, stories: array(s), cross_cutting: bool }, required: ["id", "classification", "stories", "cross_cutting"], additionalProperties: false }) }, required: ["project_id", "event_id", "reason", "entries"] },
   approve_scope: { description: "OWNER ONLY: record explicitly authorized phases and environments. Do not infer approval.", fields: { project_id: s, event_id: s, phases: array(s), environments: array(s), reason: s }, required: ["project_id", "event_id", "phases", "environments", "reason"] },
-  set_requirements: { description: "OWNER ONLY: register full approved source requirement inventory, including unmapped entries. Deleted source entries remain review items.", fields: { project_id: s, event_id: s, source: s, source_revision: s, requirements: array({ type: "object", properties: { id: s, epic: s, phase: s, stories: array(s), source_path: s, text: s, source_revision: s }, required: ["id", "epic", "phase", "stories"], additionalProperties: false }) }, required: ["project_id", "event_id", "source", "source_revision", "requirements"] },
+  set_requirements: { description: "OWNER ONLY: register full approved source requirement inventory, including unmapped entries. Deleted source entries remain review items.", fields: { project_id: s, event_id: s, source: s, source_revision: s, requirements: array({ type: "object", properties: { id: s, epic: s, phase: s, stories: array(s), source_path: s, text: s, source_revision: s, classification: { enum: ["reference", "requirement"] }, cross_cutting: bool }, required: ["id", "epic", "phase", "stories"], additionalProperties: false }) }, required: ["project_id", "event_id", "source", "source_revision", "requirements"] },
   exclude_requirement: { description: "OWNER ONLY: authorize exclusion with retained rationale/history.", fields: { project_id: s, event_id: s, requirement_id: s, reason: s }, required: ["project_id", "event_id", "requirement_id", "reason"] },
   exclude_story: { description: 'OWNER ONLY: explicitly defer or remove a child with rationale and the revised phase scope (deferred_to: target phase or "removed"; required on strict projects); exclusion is not shipped.', fields: { ...common, reason: s, deferred_to: s }, required: ["project_id", "story_id", "event_id", "reason"] },
   waive_criterion: { description: "OWNER ONLY: explicitly waive specified criterion revision for functional/deployed verification, bounded to current generation and approved environment; retained rationale is visible.", fields: { ...common, criterion_index: i, criterion_revision: i, kinds: array({ enum: ["functional", "deployed"] }), environment: s, reason: s }, required: ["project_id", "story_id", "event_id", "criterion_index", "criterion_revision", "kinds", "environment", "reason"] },
@@ -4983,7 +5070,10 @@ import os from "node:os";
 import path from "node:path";
 var SCHEMA_VERSION = 1;
 function dataHome() {
-  return path.resolve(process.env.COGUMI_KANBAN_HOME || path.join(os.homedir(), ".cogumi-claude-kanban"));
+  if (process.env.COGUMI_KANBAN_HOME) return path.resolve(process.env.COGUMI_KANBAN_HOME);
+  const current = path.join(os.homedir(), ".cogumi-kanban");
+  const legacy = path.join(os.homedir(), ".cogumi-claude-kanban");
+  return fs.existsSync(legacy) ? legacy : current;
 }
 function databasePath() {
   return path.resolve(process.env.COGUMI_KANBAN_DB || path.join(dataHome(), "kanban.db"));
@@ -4991,7 +5081,7 @@ function databasePath() {
 function assertNodeVersion(version = process.versions.node) {
   const [major, minor] = version.split(".").map(Number);
   if (major < 22 || major === 22 && minor < 13)
-    throw Error(`Cogumi Claude Kanban requires Node.js 22.13 or newer (found ${version})`);
+    throw Error(`Cogumi Kanban requires Node.js 22.13 or newer (found ${version})`);
 }
 function openStore(file = databasePath(), { create = true } = {}) {
   assertNodeVersion();
@@ -5119,6 +5209,8 @@ function coverage(project, phase) {
     source: project.requirement_source || null,
     total: reqs.length,
     unmapped: reqs.filter((r) => unmapped.has(r.id)).map(item),
+    references: reqs.filter((r) => r.classification === "reference").map(item),
+    cross_cutting: reqs.filter((r) => r.cross_cutting && r.classification !== "reference").map((r) => ({ ...item(r), stories: r.stories })),
     excluded: reqs.filter((r) => r.exclusion).map((r) => ({ ...item(r), reason: r.exclusion.reason }))
   };
 }
@@ -5127,14 +5219,15 @@ function overview(project, phase) {
   return {
     generated_at: (/* @__PURE__ */ new Date()).toISOString(),
     states,
-    project: { id: project.id, name: project.name, binding: project.binding, bindings: project.bindings || [project.binding], scope: project.scope, approval: project.approval || null, strict_checks: !!project.workflow?.strict_checks },
+    project: { id: project.id, name: project.name, binding: project.binding, bindings: project.bindings || [project.binding], scope: project.scope, approval: project.approval || null, delivery_mode: project.workflow?.delivery_mode || "approval", strict_checks: !!project.workflow?.strict_checks },
     phases: [...new Set(project.stories.map((s3) => s3.phase))].sort(),
     epics: [...new Set(project.stories.map((s3) => s3.epic))].sort(),
     summary: summary(project, phase),
     coverage: coverage(project, phase),
     stories: stories.map((s3) => card(project, s3)),
     rejections: (project.rejections || []).slice(-20),
-    last_reconciliation: project.reconciliations?.at(-1) || null
+    last_reconciliation: project.reconciliations?.at(-1) || null,
+    tracking_health: trackingHealth({ ...project, stories })
   };
 }
 function storyDetail(project, storyId) {
