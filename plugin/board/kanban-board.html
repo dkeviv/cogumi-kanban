@@ -73,7 +73,8 @@ details.notice summary { cursor: pointer; font-weight: 600; }
 .chip.pending { color: var(--pending); background: var(--pending-bg); border-color: transparent; }
 .chip.waived { color: var(--waived); background: var(--waived-bg); border-color: transparent; }
 .lane { overflow-x: auto; padding-bottom: 6px; }
-.columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 10px; min-width: min-content; }
+.columns { display: grid; grid-auto-flow: row; grid-auto-columns: minmax(230px, 1fr); gap: 10px; min-width: min-content; }
+.epic-lane-title { font-size: .9rem; padding: 12px 4px 2px; }
 .column { background: var(--sunken); border-radius: 8px; padding: 8px; display: grid; align-content: start; gap: 8px; min-width: 0; }
 .column-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; padding: 2px 4px; }
 .column-head h2 { font-size: .9rem; }
@@ -129,7 +130,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
   <div id="notice" hidden></div>
 
   <section class="section" aria-labelledby="epics-h">
-    <div class="column-head"><h2 id="epics-h">Epic completion</h2><span class="count" id="coverage"></span></div>
+    <div class="column-head"><h2 id="epics-h">Epic completion</h2><strong id="epic-completion-count" aria-live="polite"></strong><span class="count" id="coverage"></span></div>
     <details class="notice warn" id="unmapped-block" hidden><summary>Unmapped requirements block completion</summary><ul id="unmapped" class="unmapped"></ul></details>
     <div class="epics" id="epics"><div class="epic"><span class="muted">Epic progress appears here once the board loads. Completion counts every in-scope story for the selected phase; filters never shrink it.</span></div></div>
   </section>
@@ -214,9 +215,10 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     fillSelect("phase-select", ov.phases, state.phase, "All phases");
     fillSelect("epic-select", ov.epics, state.epic, "All epics");
     const sum = ov.summary || { epics: [], unmapped: [] };
+    $("epic-completion-count").textContent = `${sum.epics.filter(e => e.complete).length} of ${sum.epics.length} epics completed${state.phase ? " in this phase" : " across all phases"}`;
     const cov = ov.coverage || { unmapped: [], excluded: [] };
-    $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") + (cov.references?.length ? ` · ${cov.references.length} reference entries` : "") + (cov.source ? ` · ${cov.source.source} @ ${cov.source.revision}` : "") : "Requirement coverage not registered";
-    $("unmapped").replaceChildren(...cov.unmapped.map(r => el("li", {}, el("span", { class: "mono" }, r.id), ` ${r.epic} · ${r.phase}`, r.text ? ` · ${r.text}` : "", r.review_reason ? el("span", { class: "why" }, ` (${r.review_reason})`) : "", r.source_revision ? el("span", { class: "muted" }, ` · rev ${r.source_revision}`) : "")));
+    $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") + (cov.references?.length ? ` · ${cov.references.length} reference entries` : "") + (cov.source ? ` · ${cov.source.source}` : "") : "Requirement coverage not registered";
+    $("unmapped").replaceChildren(...cov.unmapped.map(r => el("li", {}, el("span", { class: "mono" }, r.id), ` ${r.epic} · ${r.phase}`, r.text ? ` · ${r.text}` : "", r.review_reason ? el("span", { class: "why" }, ` (${r.review_reason})`) : "", "")));
     $("unmapped-block").hidden = !cov.unmapped.length;
     const epics = sum.epics.filter(e => !state.epic || e.epic === state.epic);
     $("epics").replaceChildren(...(epics.length ? epics.map(e => {
@@ -237,19 +239,27 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     if (warnings.length) showNotice("warn", `${warnings.length} tracking gaps`, warnings.slice(0, 6).map(x => `${x.story_id}: ${x.message}`).join(" ") + (warnings.length > 6 ? ` ${warnings.length - 6} more — inspect story details or run the update command.` : ""));
     const q = state.query.toLowerCase();
     const visible = ov.stories.filter(s => (!state.epic || s.epic === state.epic) && (!q || [s.id, s.title, s.epic].join(" ").toLowerCase().includes(q)));
-    $("columns").replaceChildren(...STATES.map(st => {
-      const cards = visible.filter(s => s.status === st).sort((a, b) => Number(b.eligible_next) - Number(a.eligible_next) || a.priority - b.priority || a.id.localeCompare(b.id));
-      return el("div", { class: "column" },
-        el("div", { class: "column-head" }, el("h2", {}, st), el("span", { class: "count" }, String(cards.length))),
-        ...(cards.length ? cards.map(card) : [el("div", { class: "empty-col" }, "None")]));
-    }));
+    const epicLanes = ov.epics.filter(epic => visible.some(s => s.epic === epic));
+    $("columns").style.gridTemplateColumns = `repeat(${STATES.length}, minmax(230px, 1fr))`;
+    $("columns").replaceChildren(
+      ...STATES.map(st => el("div", {class:"column-head"}, el("h2", {}, st), el("span", {class:"count"}, String(visible.filter(s => s.status === st).length)))),
+      ...epicLanes.flatMap(epic => [
+        el("h3", {class:"epic-lane-title", style:`grid-column:1 / -1`}, epic),
+        ...STATES.map(st => {
+          const cards = visible.filter(s => s.status === st && s.epic === epic).sort((a,b) => Number(b.eligible_next)-Number(a.eligible_next) || a.priority-b.priority || a.id.localeCompare(b.id));
+          return el("section", {class:"column epic-lane", "aria-label":`${epic} · ${st}`}, ...(cards.length ? cards.map(card) : [el("div", {class:"empty-col"}, "None")]));
+        })
+      ]));
   }
+
   function card(s) {
     const cls = ["card", s.status === "Blocked" ? "s-blocked" : "", s.status === "Needs rework" || s.open_rework ? "s-rework" : "", s.status === "Shipped" && s.eligibility.deployed ? "s-ship" : "", s.eligible_next ? "s-next" : ""].join(" ");
+    const readiness = s.readiness_blockers || [];
     const proof = s.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof") : s.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof") : null;
     return el("button", { class: cls, type: "button", onclick: () => openStory(s.id) },
       el("span", { class: "row" }, el("span", { class: "mono" }, s.id), el("span", { class: "count" }, "P" + s.priority)),
       el("span", { class: "t" }, s.title),
+      readiness.length ? el("span", {class:"why"}, "Waiting: " + readiness.join("; ")) : null,
       el("span", { class: "sub" }, el("span", {}, s.epic), el("span", {}, s.phase)),
       el("span", { class: "chips" },
         s.eligible_next ? el("span", { class: "chip pending" }, "Next eligible") : null,
@@ -312,7 +322,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
         el("dt", {}, "Attempt"), el("dd", { class: "mono" }, d.attempt_id || "—"),
         el("dt", {}, "Claim"), el("dd", {}, d.claim ? `${d.claim.worker}, ${d.claim.expired ? "expired" : "expires"} ${when(d.claim.expires)}` : "Unclaimed"),
         el("dt", {}, "Criterion revision"), el("dd", {}, String(d.revision ?? "—")),
-        el("dt", {}, "Source"), el("dd", {}, [d.source_path, d.source_revision].filter(Boolean).join(" @ ") || "—"),
+        el("dt", {}, "Source"), el("dd", {}, [d.source_path].filter(Boolean).join("") || "—"),
         el("dt", {}, "Requirements"), el("dd", {}, (d.requirement_ids || []).join(", ") || "—")),
       el("div", { class: "section" }, el("h3", {}, "Acceptance criteria"),
         el("ol", { class: "criteria" }, ...d.criteria.map((c, i) => {

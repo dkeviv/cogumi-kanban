@@ -11,7 +11,7 @@
       "name": "cogumi-kanban",
       "source": "./plugin",
       "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
-      "version": "2.5.0"
+      "version": "2.5.1"
     }
   ]
 }

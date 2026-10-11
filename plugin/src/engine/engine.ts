@@ -227,6 +227,12 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
     };
     const save = (result: any, s?: Story, data: any = {}) => {
         if (p.workflow.delivery_mode==='auto' && (['approve_scope','import_stories','reconcile'].includes(action) || (action==='update_status' && a.status==='Shipped'))) advanceQueue();
+        if(s && p.workflow.delivery_mode==='auto' && s.claim && Date.parse(s.claim.expires)>now.getTime() && p.approval?.phases.includes(s.phase)) {
+            const prior=s.status;
+            if(action==='begin_run' && s.status==='Implementing')s.status='Verifying';
+            if(action==='record_evidence' && ['Implementing','Verifying'].includes(s.status) && eligibility(p,s).functional)s.status='Ready to ship';
+            if(prior!==s.status)s.history.push({at:now.toISOString(),action:'auto_progress',actor:actor.id,from:prior,status:s.status,reason:'Recorded verification milestone'});
+        }
         const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
         p.audit.push(audit);
         if (s) {
@@ -650,6 +656,11 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
             string,
             ...string[]
         ]).parse(a.status);
+        if(target===st.status && ['Verifying','Ready to ship'].includes(target)) {
+            active(st,a,now);phaseAllowed(p,st);
+            req(target==='Verifying'?st.commit:eligibility(p,st).functional,'Current verification milestone required');
+            return save(st,st,{status:target});
+        }
         if (target === 'Blocked') {
             str.parse(a.reason);
             st.blocked = { previous: st.status, next_action: a.next_action || 'Owner reconciliation required', dependency: a.dependency || 'unknown' };

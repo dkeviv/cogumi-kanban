@@ -17,6 +17,17 @@ export function eligibleNow(project: any, story: any) {
         && (story.dependencies || []).every((id: string) => project.stories.some((x: any) => x.id === id && x.status === 'Shipped' && eligibility(project, x).deployed));
 }
 
+export function readinessBlockers(project:any,s:any) {
+    if(!['Draft','Backlog'].includes(s.status))return [];
+    const reasons:string[]=[];
+    if(!project.approval?.phases.includes(s.phase))reasons.push('Phase not selected for delivery');
+    if(s.proposal_pending)reasons.push('Scope proposal unresolved');
+    if(s.source_review)reasons.push('Source changes need assessment');
+    if(!s.proof_plan?.length || s.proof_plan.length!==s.criteria.length)reasons.push('Verification plan missing');
+    else if(project.workflow?.strict_checks && !s.proof_plan.every((v:any)=>v.evidence_requirement&&['functional','deployed'].every(kind=>v.checks?.some((c:any)=>c.kind===kind))))reasons.push('Functional and deployed checks need planning');
+    if(s.dependencies.some((id:string)=>!project.stories.some((x:any)=>x.id===id&&x.status==='Shipped'&&eligibility(project,x).deployed)))reasons.push('Dependencies unfinished');
+    return reasons;
+}
 function card(project: any, s: any) {
     const last = s.history?.at(-1);
     // The engine closes reports with closed_at / resolved_at timestamps.
@@ -25,6 +36,7 @@ function card(project: any, s: any) {
         id: s.id, title: s.title, epic: s.epic, phase: s.phase, priority: s.priority, status: s.status,
         blocker: s.blocker || s.blocked?.reason || null,
         dependencies: s.dependencies || [],
+        readiness_blockers: readinessBlockers(project,s),
         claim: publicClaim(s.claim),
         actor: last?.actor || null, last_action: last?.action || null,
         updated_at: s.updated_at || last?.at || null,

@@ -4410,6 +4410,12 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   };
   const save = (result, s3, data = {}) => {
     if (p.workflow.delivery_mode === "auto" && (["approve_scope", "import_stories", "reconcile"].includes(action) || action === "update_status" && a.status === "Shipped")) advanceQueue();
+    if (s3 && p.workflow.delivery_mode === "auto" && s3.claim && Date.parse(s3.claim.expires) > now.getTime() && p.approval?.phases.includes(s3.phase)) {
+      const prior = s3.status;
+      if (action === "begin_run" && s3.status === "Implementing") s3.status = "Verifying";
+      if (action === "record_evidence" && ["Implementing", "Verifying"].includes(s3.status) && eligibility(p, s3).functional) s3.status = "Ready to ship";
+      if (prior !== s3.status) s3.history.push({ at: now.toISOString(), action: "auto_progress", actor: actor.id, from: prior, status: s3.status, reason: "Recorded verification milestone" });
+    }
     const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
     p.audit.push(audit);
     if (s3) {
@@ -4915,6 +4921,12 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   if (action === "update_status") {
     owner(actor);
     const target = external_exports.enum(states).parse(a.status);
+    if (target === st.status && ["Verifying", "Ready to ship"].includes(target)) {
+      active(st, a, now);
+      phaseAllowed(p, st);
+      req(target === "Verifying" ? st.commit : eligibility(p, st).functional, "Current verification milestone required");
+      return save(st, st, { status: target });
+    }
     if (target === "Blocked") {
       str.parse(a.reason);
       st.blocked = { previous: st.status, next_action: a.next_action || "Owner reconciliation required", dependency: a.dependency || "unknown" };
@@ -5170,6 +5182,17 @@ function publicClaim(claim) {
 function eligibleNow(project, story2) {
   return story2.status === "Ready" && !!project.approval?.phases?.includes(story2.phase) && !story2.proposal_pending && !story2.exclusion && (story2.dependencies || []).every((id2) => project.stories.some((x) => x.id === id2 && x.status === "Shipped" && eligibility(project, x).deployed));
 }
+function readinessBlockers(project, s3) {
+  if (!["Draft", "Backlog"].includes(s3.status)) return [];
+  const reasons = [];
+  if (!project.approval?.phases.includes(s3.phase)) reasons.push("Phase not selected for delivery");
+  if (s3.proposal_pending) reasons.push("Scope proposal unresolved");
+  if (s3.source_review) reasons.push("Source changes need assessment");
+  if (!s3.proof_plan?.length || s3.proof_plan.length !== s3.criteria.length) reasons.push("Verification plan missing");
+  else if (project.workflow?.strict_checks && !s3.proof_plan.every((v) => v.evidence_requirement && ["functional", "deployed"].every((kind) => v.checks?.some((c) => c.kind === kind)))) reasons.push("Functional and deployed checks need planning");
+  if (s3.dependencies.some((id2) => !project.stories.some((x) => x.id === id2 && x.status === "Shipped" && eligibility(project, x).deployed))) reasons.push("Dependencies unfinished");
+  return reasons;
+}
 function card(project, s3) {
   const last = s3.history?.at(-1);
   const openRework = (s3.rework || []).filter((r) => !r.closed_at && !r.resolved_at);
@@ -5182,6 +5205,7 @@ function card(project, s3) {
     status: s3.status,
     blocker: s3.blocker || s3.blocked?.reason || null,
     dependencies: s3.dependencies || [],
+    readiness_blockers: readinessBlockers(project, s3),
     claim: publicClaim(s3.claim),
     actor: last?.actor || null,
     last_action: last?.action || null,
@@ -5326,7 +5350,7 @@ var KanbanService = class {
 
 // src/server/mcp.ts
 var SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-var SERVER_INFO = { name: "cogumi-kanban", version: "2.5.0" };
+var SERVER_INFO = { name: "cogumi-kanban", version: "2.5.1" };
 var MAX_MESSAGE = 4e6;
 function instructions(pluginRoot2) {
   return workflowGuide.replaceAll("<plugin>", pluginRoot2);

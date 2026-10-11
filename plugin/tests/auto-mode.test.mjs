@@ -45,3 +45,7 @@ test('an unchanged legacy import preserves audited reference classification',()=
  assert.equal(f.p.requirements.find(r=>r.id==='HEADER').classification,'reference');
  assert.equal(f.p.requirements.find(r=>r.id==='HEADER').mapping_history.length,1);
 });
+test('Auto advances verification from recorded checks and qualifying evidence',()=>{
+ const f=fixture();f.start();f.s.status='Implementing';call(f,'set_delivery_mode',{mode:'auto',reason:'auto'});const run=f.begin();assert.equal(f.s.status,'Verifying');f.evidence(run);assert.equal(f.s.status,'Ready to ship');assert.notEqual(f.s.status,'Shipped');
+ const g=fixture();g.start();g.s.status='Implementing';call(g,'set_delivery_mode',{mode:'auto',reason:'auto'});const r=g.begin();g.evidence(r,{result:'fail',exit_code:1});assert.equal(g.s.status,'Verifying');
+});
