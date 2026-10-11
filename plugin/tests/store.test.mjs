@@ -14,7 +14,7 @@ import { A } from './helpers.mjs';
 const temp = () => fs.mkdtemp(path.join(os.tmpdir(), 'cgk-store-'));
 
 async function readyStory(service, strict = false) {
-    const p = await service.call('create_project', { strict_checks: strict, name: 'p', binding: 'https://example.test/p', event_id: 'create' });
+    const p = await service.call('create_project', {delivery_mode:'approval', strict_checks: strict, name: 'p', binding: 'https://example.test/p', event_id: 'create' });
     const go = (action, args = {}) => service.call(action, { project_id: p.id, binding: p.binding, story_id: 'S', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { stories: [{ id: 'S', title: 't', epic: 'E', criteria: ['works'], proof_plan: [{ type: 'logic', expected: 'works' }] }] });
     await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'ok' });

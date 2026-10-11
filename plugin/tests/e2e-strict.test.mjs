@@ -21,7 +21,7 @@ test('strict project goes from creation to Shipped by following the skill, survi
     try {
         const binding = JSON.parse(kanban('', 'workflow', 'binding').stdout).binding;
         assert.equal(binding, 'https://github.com/example/final-demo');
-        const p = await k.call('create_project', { name: 'Final Demo', binding, event_id: 'cp' });
+        const p = await k.call('create_project', {delivery_mode:'approval', name: 'Final Demo', binding, event_id: 'cp' });
         assert.equal(p.workflow.strict_checks, true);
         const go = (action, args) => k.call(action, { project_id: p.id, story_id: 'S1', event_id: crypto.randomUUID(), ...args });
         const checks = [{ id: 'S1-api', kind: 'functional', command: 'node check.cjs', assertions: ['returns 200', 'body ok'] }, { id: 'S1-deployed', kind: 'deployed', command: 'node check.cjs', assertions: ['returns 200', 'body ok'] }];

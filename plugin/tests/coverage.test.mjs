@@ -200,7 +200,7 @@ test('a Blocked story resumes to the state it interrupted, under that state\'s g
 test('strict claims require a fresh session with no pending or rejected events (scenario 20)', async () => {
     const { KanbanService } = await import('../src/server/service.ts');
     const k = new KanbanService(':memory:');
-    const p = await k.call('create_project', { name: 'Strict', binding: 'https://e.test/strict', event_id: 'c' });
+    const p = await k.call('create_project', {delivery_mode:'approval', name: 'Strict', binding: 'https://e.test/strict', event_id: 'c' });
     const go = (action, args = {}) => k.call(action, { project_id: p.id, story_id: 'S1', binding: p.binding, event_id: crypto.randomUUID(), ...args });
     const checks = [{ id: 'f', kind: 'functional', command: 'node t', assertions: ['a'] }, { id: 'd', kind: 'deployed', command: 'node t', assertions: ['a'] }];
     await go('import_stories', { source: 'P', source_revision: '1', stories: [{ id: 'S1', epic: 'E', title: 't', criteria: ['x'], proof_plan: [{ type: 'api', expected: 'x', evidence_requirement: 'assertions', checks }] }] });
@@ -218,7 +218,7 @@ test('strict claims require a fresh session with no pending or rejected events (
 test('deferring a story records rationale and the revised phase scope, required on strict projects (COV 01)', async () => {
     const { KanbanService } = await import('../src/server/service.ts');
     const k = new KanbanService(':memory:');
-    const p = await k.call('create_project', { name: 'Strict', binding: 'https://e.test/defer', event_id: 'c' });
+    const p = await k.call('create_project', {delivery_mode:'approval', name: 'Strict', binding: 'https://e.test/defer', event_id: 'c' });
     const go = (action, args = {}) => k.call(action, { project_id: p.id, story_id: 'S1', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { source: 'P', source_revision: '1', stories: [{ id: 'S1', epic: 'E', title: 't', criteria: ['x'] }] });
     await go('set_requirements', { source: 'P', source_revision: '1', requirements: [{ id: 'R1', epic: 'E', phase: 'MVP', stories: ['S1'] }] });

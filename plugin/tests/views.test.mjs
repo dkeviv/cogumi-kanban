@@ -6,7 +6,7 @@ import { A } from './helpers.mjs';
 
 async function claimed() {
     const service = new KanbanService(':memory:');
-    const p = await service.call('create_project', { strict_checks: false, name: 'Board', binding: 'https://example.test/b', event_id: 'c' });
+    const p = await service.call('create_project', {delivery_mode:'approval', strict_checks: false, name: 'Board', binding: 'https://example.test/b', event_id: 'c' });
     const go = (action, args = {}) => service.call(action, { project_id: p.id, binding: p.binding, story_id: 'S1', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { stories: [
         { id: 'S1', title: 'First', epic: 'E1', phase: 'MVP', criteria: ['works'], proof_plan: [{ type: 'logic', expected: 'works' }] },

@@ -6,9 +6,127 @@ var __export = (target, all) => {
 };
 
 // src/cli/main.ts
+import fs5 from "node:fs";
+
+// src/server/worker.ts
 import fs4 from "node:fs";
 import path4 from "node:path";
-import { fileURLToPath } from "node:url";
+import crypto3 from "node:crypto";
+import { spawn, spawnSync as spawnSync3 } from "node:child_process";
+
+// src/server/store.ts
+import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+var SCHEMA_VERSION = 1;
+function dataHome() {
+  if (process.env.COGUMI_KANBAN_HOME) return path.resolve(process.env.COGUMI_KANBAN_HOME);
+  const current = path.join(os.homedir(), ".cogumi-kanban");
+  const legacy = path.join(os.homedir(), ".cogumi-claude-kanban");
+  return fs.existsSync(legacy) ? legacy : current;
+}
+function databasePath() {
+  return path.resolve(process.env.COGUMI_KANBAN_DB || path.join(dataHome(), "kanban.db"));
+}
+function assertNodeVersion(version = process.versions.node) {
+  const [major, minor] = version.split(".").map(Number);
+  if (major < 22 || major === 22 && minor < 13)
+    throw Error(`Cogumi Kanban requires Node.js 22.13 or newer (found ${version})`);
+}
+function openStore(file = databasePath(), { create = true } = {}) {
+  assertNodeVersion();
+  if (file !== ":memory:") {
+    if (!create && !fs.existsSync(file))
+      throw Object.assign(new Error(`Tracker database not found at ${file}; check COGUMI_KANBAN_HOME/COGUMI_KANBAN_DB`), { code: "COGUMI_UNAVAILABLE" });
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 448 });
+    if (!fs.existsSync(file))
+      fs.closeSync(fs.openSync(file, "a", 384));
+    fs.chmodSync(file, 384);
+  }
+  const sql = new DatabaseSync(file);
+  try {
+    prepareSchema(sql, file);
+  } catch (e) {
+    sql.close();
+    throw e;
+  }
+  return {
+    file,
+    close: () => sql.close(),
+    prepare(query) {
+      let values = [];
+      const statement = {
+        bind(...args) {
+          values = args;
+          return statement;
+        },
+        async first() {
+          return sql.prepare(query).get(...values) ?? null;
+        },
+        async run() {
+          const r = sql.prepare(query).run(...values);
+          return { meta: { changes: Number(r.changes) } };
+        }
+      };
+      return statement;
+    }
+  };
+}
+function prepareSchema(sql, file) {
+  sql.exec("PRAGMA busy_timeout=5000");
+  if (file !== ":memory:")
+    sql.exec("PRAGMA journal_mode=WAL");
+  sql.exec(`CREATE TABLE IF NOT EXISTS boards(owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+  const version = sql.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
+  if (!version)
+    sql.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
+  else if (Number(version.value) > SCHEMA_VERSION)
+    throw Error(`Database schema ${version.value} is newer than this plugin supports (${SCHEMA_VERSION}); update the plugin`);
+}
+var TRANSIENT_SQLITE = /* @__PURE__ */ new Set([5, 6, 10, 13, 14]);
+var TRANSIENT_EXTENDED = /* @__PURE__ */ new Set([264, 520]);
+function isTransient(error) {
+  const e = error;
+  if (typeof e?.errcode === "number" && (TRANSIENT_SQLITE.has(e.errcode & 255) || TRANSIENT_EXTENDED.has(e.errcode)))
+    return true;
+  if (["ENOENT", "EBUSY", "EMFILE", "ENFILE", "ENOSPC", "COGUMI_UNAVAILABLE"].includes(e?.code))
+    return true;
+  return /^Concurrent (update|initialization)/.test(String(e?.message || ""));
+}
+
+// src/server/binding.ts
+import { spawnSync } from "node:child_process";
+import fs2 from "node:fs";
+import path2 from "node:path";
+function normalizeOrigin(url) {
+  let u = url.trim();
+  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):\/?(?!\/)(.+)$/.exec(u);
+  if (scp && !/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = `https://${scp[1]}/${scp[2]}`;
+  try {
+    const parsed = new URL(u);
+    if (!["http:", "https:", "ssh:", "git:", "git+ssh:", "ssh+git:"].includes(parsed.protocol)) return u.replace(/\/+$/, "").replace(/\.git$/, "");
+    const pathname = decodeURIComponent(parsed.pathname).replace(/\/+$/, "").replace(/\.git$/, "").replace(/\/+$/, "");
+    const port = parsed.port && ["http:", "https:"].includes(parsed.protocol) ? `:${parsed.port}` : "";
+    return `https://${parsed.hostname.toLowerCase()}${port}${pathname}`;
+  } catch {
+    return u.replace(/\/+$/, "").replace(/\.git$/, "");
+  }
+}
+var git = (cwd, args) => spawnSync("git", args, { cwd, encoding: "utf8" });
+function observeBinding(cwd = process.cwd()) {
+  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (top.status !== 0) throw Error("Not inside a Git repository");
+  const root = top.stdout.trim();
+  const origin = git(cwd, ["remote", "get-url", "origin"]);
+  if (origin.status === 0 && origin.stdout.trim())
+    return { binding: normalizeOrigin(origin.stdout.trim()), root, origin: origin.stdout.trim() };
+  const common2 = git(cwd, ["rev-parse", "--git-common-dir"]);
+  if (common2.status !== 0) throw Error("Cannot determine Git common directory");
+  const dir = path2.resolve(cwd, common2.stdout.trim());
+  return { binding: `local:${fs2.realpathSync(dir)}`, root, origin: null };
+}
 
 // src/engine/tracking-health.ts
 function trackingHealth(project, now = Date.now()) {
@@ -509,8 +627,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path5, errorMaps, issueData } = params;
-  const fullPath = [...path5, ...issueData.path || []];
+  const { data, path: path6, errorMaps, issueData } = params;
+  const fullPath = [...path6, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -626,11 +744,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path5, key) {
+  constructor(parent, value, path6, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path5;
+    this._path = path6;
     this._key = key;
   }
   get path() {
@@ -4120,11 +4238,11 @@ INTAKE: For an informal request, extract the user's goal, included/excluded scop
 
 SETUP: Observe the repository identity with "sh <plugin>/bin/kanban workflow binding" (normalized git origin URL, or local:<git common directory> when there is no origin; all worktrees share it). Resolve it with resolve_project; ask the user to choose if ambiguous, never guess from a title. create_project only if genuinely new. The binding-to-project mapping lives only in the tracker; write nothing into the product checkout. add_binding explicitly associates additional repositories, not branches/worktrees. Use the Claude session ID (given by the SessionStart hook) as thread_id with associate_thread/start_session; if unavailable, use a clearly labeled stable workspace session identifier. Reporter configuration files are non-secret and live outside product source. Never put credentials in chat, source, config, checkpoints or the tracker.
 
-OWNER TOOLS: Tools described as OWNER change scope or authority (approve_scope, waive_criterion, exclude_*, approve_proposal, decide_intake, recover_claim, configure_workflow, classify_rework, resolve_rework_scope, add_binding, set_requirements). Call them only after the user has explicitly approved that decision in this conversation, and quote the approval in the reason.
+OWNER TOOLS: Inspect delivery mode first; default Auto. In Auto, make and record owner workflow decisions without asking for separate approval. Preserve the user's explicit constraints and requested outcome. In Approval, obtain explicit authorization for owner decisions, reusing authorization already supplied. Role checks and proof gates apply in both modes. Never take over a live worker or fabricate evidence.
 
 START/RESUME: Read get_board (or board_overview for a compact view) and workflow. Run "sh <plugin>/bin/kanban workflow observe CONFIG" to inspect actual binding, current commit, dirty state, outbox, rejected events and run logs. Recover reports with "resume CONFIG" when an active reporter attempt exists; if a prior run is still active, stop recovery. Unknown prior worker state requires verified interruption. Inspect known provider releases before redeploying. Call start_session with observed binding, commit, session ID and the actual pending and rejected counts from observe; unresolved or rejected reports and conflicts must be investigated. Do not turn a missing signal into success.
 
-PLAN/CLAIM: Register the full source inventory with set_requirements, including unmapped requirements. Preview imports before writing ambiguous changes. Configure strict_checks=true; legacy evidence needs review before requalification. Each criterion needs type, expected outcome, evidence_requirement and reviewed checks: stable check ID, functional/deployed kind, exact command and named observable assertions. Review assertions for actual behavior; successful build/lint or a screenshot is not functionality. The owner approves explicit phases/environments; tracker operations do not grant new coding/deployment authority. Ready requires reviewed scope/plans/dependencies. next_story selects eligible priority work. Claim BEFORE coding, with binding, worker, branch/checkout, exact starting commit and acceptance plan. Keep the returned attempt ID and lease token for this session's tool calls only. Continue only within the approved scope.
+PLAN/CLAIM: Register the full source inventory with set_requirements, including unmapped requirements. Preview imports before writing ambiguous changes. Configure strict_checks=true; legacy evidence needs review before requalification. Each criterion needs type, expected outcome, evidence_requirement and reviewed checks: stable check ID, functional/deployed kind, exact command and named observable assertions. Review assertions for actual behavior; successful build/lint or a screenshot is not functionality. Record phases/environments as owner decisions without separate approval in Auto; Approval mode requires authorization; tracker operations do not grant new coding/deployment authority. Ready requires reviewed scope/plans/dependencies. next_story selects eligible priority work. Claim BEFORE coding, with binding, worker, branch/checkout, exact starting commit and acceptance plan. Keep the returned attempt ID and lease token for this session's tool calls only. Continue only within the approved scope.
 
 VERIFY: Record the exact candidate commit with set_commit. Use "sh <plugin>/bin/kanban workflow test CONFIG", which executes the command, registers the run, saves a started checkpoint, heartbeats the lease, records failures/signals/dirty/source drift and queues results in the durable outbox before delivery. check_ids must match the reviewed command and criteria. Actual check code writes [{check_id,name,result}] to the assertion file given in COGUMI_ASSERTION_FILE; never fabricate outcomes from an exit code. Label model/human evaluations separately; their judgments are not deterministic guarantees. Failed/incomplete checks block completion. Outbox replay uses stable event IDs; permanently rejected events are moved aside visibly, the affected run is recorded as blocked, and the cause must be investigated ("kanban report requeue" resends after a fix). Checkpoint files are credential-free. For recovery from loss of the local data directory, configure COGUMI_CHECKPOINT_DIR on separate durable storage. No system can preserve a result that exists only in destroyed local files.
 
@@ -4138,8 +4256,8 @@ BOARD: In Codex start "sh <plugin>/bin/kanban cli board" as a persistent process
 
 PROGRESS CAPTURE: Run "sh <plugin>/bin/kanban cli update" at session start, before switching stories, after blockers and before progress reports. The /cogumi-kanban:update command invokes it on demand. It persists reconciliation and checks Git, queues and missing proof files. Direct tests are untracked and cannot qualify; use workflow test CONFIG, which journals start/result, heartbeats and durable delivery. Never infer a pass from missing output or recover another active worker. Record blockers promptly.
 
-FINISH: Read full phase coverage/epic summary, not filtered cards. Inspect current criteria/proof/releases, capture baseline/project_metrics and reconcile. Report saved mutations and remaining blockers accurately. No periodic scheduler or worker restart is implemented; those are later scope.
-DELIVERY MODE: Inspect project.workflow.delivery_mode (default approval). Auto is an explicit user authorization to continue routine planning, Backlog/Ready preparation and delivery across all epics in already approved phases/environments without asking per story/epic. Prepare missing proof plans for unchanged approved criteria, reconcile, next_story, claim, implement, tracked checks, real release/deployed checks, before-close, Shipped, then continue next eligible story. Queue promotion is automatic on imports/scope approval/reconciliation/closure. Do not stop just because an epic ended. Stop for real blockers or exhausted approved scope; Auto is not a separate background worker. New criteria/scope, future phases, exclusions, waivers and taking over another worker still require their owner decision. Approval mode retains reviewed manual queue transitions. Both modes retain all proof gates.
+FINISH: Read full phase coverage/epic summary, not filtered cards. Inspect current criteria/proof/releases, capture baseline/project_metrics and reconcile. Report saved mutations and remaining blockers accurately. Persistent delivery is available through cli worker start|status|stop. The supervisor resumes its saved host session, restarts after interruption and waits on blocked/no-progress states.
+DELIVERY MODE: Inspect project.workflow.delivery_mode (default auto). Auto is the default mode; selecting it is authorization to continue routine planning, Backlog/Ready preparation and delivery across all epics in already approved phases/environments without asking per story/epic. Prepare missing proof plans for unchanged approved criteria, reconcile, next_story, claim, implement, tracked checks, real release/deployed checks, before-close, Shipped, then continue next eligible story. Queue promotion is automatic on imports/scope approval/reconciliation/closure. Do not stop just because an epic ended. Stop for real blockers or exhausted approved scope; Enable persistent delivery with /cogumi-kanban:worker start. Auto permits owner decisions without separate approval; record rationale and respect explicit user constraints. Recover expired claims only after verified interruption and matching source/outbox reconciliation. Approval mode retains reviewed manual queue transitions. Both modes retain all proof gates.
 SOURCE INVENTORY: Retain title/version/owner metadata as reference classification; retain actual obligations as requirements. Cross-cutting requirements may map across epics/phases. Classify and map with source provenance; uncertain mappings remain visibly unmapped. classify_requirements repairs metadata/traceability without deleting source or certifying implementation. Never remove real requirements to improve counters.
 `;
 
@@ -4191,6 +4309,7 @@ function migrate(b, now) {
     p.intakes ||= [];
     p.sessions ||= [];
     p.workflow ||= { strict_checks: false };
+    p.workflow.delivery_mode ||= "auto";
     p.requirements ||= [];
     p.reconciliations ||= [];
     p.audit ||= [];
@@ -4327,13 +4446,14 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const key = id.parse(a.event_id);
     const source = a.source === void 0 ? "" : str.parse(a.source), scope = a.scope === void 0 ? "No implementation authorized" : str.parse(a.scope);
     const strict_checks = a.strict_checks === void 0 ? true : external_exports.boolean().parse(a.strict_checks);
-    const payload2 = JSON.stringify({ name, binding, source, scope, ...a.strict_checks === void 0 ? {} : { strict_checks } });
+    const delivery_mode = external_exports.enum(["auto", "approval"]).parse(a.delivery_mode || "auto");
+    const payload2 = JSON.stringify({ name, binding, source, scope, ...a.strict_checks === void 0 ? {} : { strict_checks }, ...a.delivery_mode === void 0 ? {} : { delivery_mode } });
     if (board.events[key]) {
       req(board.events[key].payload === payload2, "Event ID reused with different payload");
       return board.projects.find((p3) => p3.id === board.events[key].project_id);
     }
     req(!board.projects.some((p3) => p3.bindings.includes(binding)), "Binding already exists");
-    const p2 = { id: uid(), name, binding, source, scope, stories: [], events: [], eventRecords: {}, requirements: [], reconciliations: [], audit: [{ actor: actor.id, at: now.toISOString(), action }], approval: null, workflow: { strict_checks }, bindings: [binding], threads: [], sessions: [], intakes: [] };
+    const p2 = { id: uid(), name, binding, source, scope, stories: [], events: [], eventRecords: {}, requirements: [], reconciliations: [], audit: [{ actor: actor.id, at: now.toISOString(), action }], approval: null, workflow: { strict_checks, delivery_mode }, bindings: [binding], threads: [], sessions: [], intakes: [] };
     board.projects.push(p2);
     board.events[key] = { payload: payload2, project_id: p2.id };
     return p2;
@@ -4407,7 +4527,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     }
     return { backlog, ready, waiting };
   };
-  const save = (result, s3, data = {}) => {
+  const save2 = (result, s3, data = {}) => {
     if (p.workflow.delivery_mode === "auto" && (["approve_scope", "import_stories", "reconcile"].includes(action) || action === "update_status" && a.status === "Shipped")) advanceQueue();
     const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
     p.audit.push(audit);
@@ -4426,12 +4546,12 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     str.parse(a.reason);
     p.workflow.delivery_mode = mode;
     p.workflow.mode_decision = { mode, reason: a.reason, actor: actor.id, at: now.toISOString() };
-    return save({ mode, queue: mode === "auto" ? advanceQueue() : { backlog: [], ready: [], waiting: [] } });
+    return save2({ mode, queue: mode === "auto" ? advanceQueue() : { backlog: [], ready: [], waiting: [] } });
   }
   if (action === "advance_queue") {
     owner(actor);
     req(p.workflow.delivery_mode === "auto", "Queue automation requires Auto mode");
-    return save(advanceQueue());
+    return save2(advanceQueue());
   }
   if (action === "classify_requirements") {
     owner(actor);
@@ -4449,7 +4569,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       r.mapping_history.push({ stories: r.stories, classification: r.classification || "requirement", cross_cutting: !!r.cross_cutting, at: now.toISOString(), actor: actor.id, reason: a.reason });
       Object.assign(r, { classification: entry.classification, stories: entry.stories, cross_cutting: entry.cross_cutting });
     }
-    return save({ classified: entries.length, summary: summary(p) });
+    return save2({ classified: entries.length, summary: summary(p) });
   }
   if (action === "add_binding") {
     owner(actor);
@@ -4457,7 +4577,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     str.parse(a.reason);
     req(!board.projects.some((x) => x.id !== p.id && x.bindings.includes(binding)), "Binding already belongs to another project");
     if (!p.bindings.includes(binding)) p.bindings.push(binding);
-    return save({ bindings: p.bindings });
+    return save2({ bindings: p.bindings });
   }
   if (action === "associate_thread") {
     owner(actor);
@@ -4468,7 +4588,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       t.last_seen_at = now.toISOString();
       t.binding = a.binding;
     } else p.threads.push({ thread_id, binding: a.binding, at: now.toISOString(), last_seen_at: now.toISOString(), actor: actor.id });
-    return save(p.threads.find((x) => x.thread_id === thread_id));
+    return save2(p.threads.find((x) => x.thread_id === thread_id));
   }
   if (action === "start_session") {
     owner(actor);
@@ -4479,14 +4599,14 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     if (!p.threads.some((t) => t.thread_id === thread_id)) p.threads.push({ thread_id, binding: a.binding, at: now.toISOString(), actor: actor.id });
     const reconciliation = { ...session, staleClaims: p.stories.filter((s3) => s3.claim && Date.parse(s3.claim.expires) <= now.getTime()).map((s3) => s3.id), repairs: [], conflicts: [] };
     p.reconciliations.push(reconciliation);
-    return save({ ...session, summary: summary(p), next_story: pending_events === 0 ? dispatch(board, "next_story", { project_id: p.id }, now, actor) : null });
+    return save2({ ...session, summary: summary(p), next_story: pending_events === 0 ? dispatch(board, "next_story", { project_id: p.id }, now, actor) : null });
   }
   if (action === "configure_workflow") {
     owner(actor);
     str.parse(a.reason);
-    p.workflow = { strict_checks: external_exports.boolean().parse(a.strict_checks) };
+    p.workflow = { ...p.workflow, strict_checks: external_exports.boolean().parse(a.strict_checks) };
     for (const s3 of p.stories) invalidate(p, s3);
-    return save(p.workflow);
+    return save2(p.workflow);
   }
   if (action === "approve_proposal") {
     owner(actor);
@@ -4497,7 +4617,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     proposal.proposal_pending = false;
     proposal.status = "Backlog";
     p.requirements.push({ id: `PROPOSAL-${proposal.id}`, epic: proposal.epic, phase: proposal.phase, stories: [proposal.id], text: proposal.criteria.join("\n"), source_path: `report:${proposal.origin_report_id || proposal.intake_id}`, source_revision: event });
-    return save(proposal, proposal);
+    return save2(proposal, proposal);
   }
   if (action === "import_source_bundle") {
     owner(actor);
@@ -4515,7 +4635,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     dispatch(board, "set_requirements", { project_id: p.id, event_id: event + ":coverage", requirements, source, source_revision: revision }, now, actor);
     p.source_mappings ||= [];
     p.source_mappings.push(mappings);
-    return save({ imported, source_revision: revision, summary: summary(p) });
+    return save2({ imported, source_revision: revision, summary: summary(p) });
   }
   if (action === "capture_baseline") {
     owner(actor);
@@ -4523,7 +4643,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const metrics = dispatch(board, "project_metrics", { project_id: p.id }, now, actor);
     delete metrics.baseline;
     p.metrics_baseline = { at: now.toISOString(), actor: actor.id, metrics };
-    return save(p.metrics_baseline);
+    return save2(p.metrics_baseline);
   }
   if (action === "propose_intake") {
     owner(actor);
@@ -4533,7 +4653,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const intake = { id: uid(), request, goal, source_revision: a.source_revision || event, stories: input.map((x) => x.id), decisions: [], at: now.toISOString(), actor: actor.id };
     for (const x of input) p.stories.push({ ...x, proof_plan: x.proof_plan || [], proposal_pending: true, status: "Draft", revision: 1, generation: 1, version: 1, criterion_ids: x.criteria.map((_, i2) => `${x.id}:1:${i2}`), history: [{ action: "intake", request, at: now.toISOString(), actor: actor.id }], runs: [], attempts: [], rework: [], releases: [], evidence: [], waivers: [], source_revision: intake.source_revision, intake_id: intake.id, updated_at: now.toISOString() });
     p.intakes.push(intake);
-    return save(intake);
+    return save2(intake);
   }
   if (action === "decide_intake") {
     owner(actor);
@@ -4552,7 +4672,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     if (decision !== "approved") for (const s3 of p.stories.filter((s4) => intake.stories.includes(s4.id))) withdrawIntake(p, s3, intake, decision, reason, now);
     if (decision === "approved") for (const requirement of p.requirements.filter((r) => r.exclusion?.intake_withdrawal === intake.id)) delete requirement.exclusion;
     if (decision === "approved" && !p.requirement_source) p.requirement_source = { source: "Reviewed informal intake", revision: intake.source_revision };
-    return save(intake);
+    return save2(intake);
   }
   if (action === "approve_scope") {
     owner(actor);
@@ -4572,7 +4692,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       }
       invalidate(p, s3);
     }
-    return save(p.approval);
+    return save2(p.approval);
   }
   if (action === "set_requirements") {
     owner(actor);
@@ -4607,14 +4727,14 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     for (const r of missing)
       p.requirements.push({ ...r, stories: [], review_reason: "Removed from source; explicit owner exclusion required" });
     p.requirement_source = { source, revision };
-    return save({ requirements: p.requirements, summary: summary(p) });
+    return save2({ requirements: p.requirements, summary: summary(p) });
   }
   if (action === "exclude_requirement") {
     owner(actor);
     const r = p.requirements.find((r2) => r2.id === a.requirement_id);
     req(r, "Requirement not found");
     r.exclusion = { reason: str.parse(a.reason), actor: actor.id, at: now.toISOString() };
-    return save(r);
+    return save2(r);
   }
   if (action === "import_stories") {
     owner(actor);
@@ -4641,7 +4761,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       s3.history.push({ at: now.toISOString(), actor: actor.id, action: "import", source: a.source || p.source });
       s3.updated_at = now.toISOString();
     }
-    return save(counts);
+    return save2(counts);
   }
   if (action === "reconcile") {
     owner(actor);
@@ -4660,7 +4780,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     }
     r.tracking_health = trackingHealth(p, now.getTime());
     p.reconciliations.push(r);
-    return save(r);
+    return save2(r);
   }
   const st = p.stories.find((s3) => s3.id === a.story_id);
   req(st, "Story not found");
@@ -4683,7 +4803,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     if (actor.role === "owner") active(st, a, now);
     st.claim.expires = new Date(now.getTime() + 36e5).toISOString();
     st.claim.heartbeat_at = now.toISOString();
-    return save({ expires: st.claim.expires, attempt_id: st.attempt_id }, st);
+    return save2({ expires: st.claim.expires, attempt_id: st.attempt_id }, st);
   }
   if (action === "checkpoint_attempt") {
     req(a.attempt_id === st.attempt_id && st.claim && Date.parse(st.claim.expires) > now.getTime(), "Active current attempt required; superseded checkpoints are read-only");
@@ -4707,7 +4827,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     invalidate(p, st);
     const reconciliation = { id: uid(), at: now.toISOString(), actor: actor.id, story_id: st.id, attempt_id: st.attempt_id, commit: cp.commit, pending_events: cp.pending_events, stage: cp.stage, repairs: before === st.status ? [] : [{ story: st.id, previous: before, status: st.status }], conflicts: cp.commit === st.commit ? [] : [{ story: st.id, reason: "Observed checkout differs from candidate" }] };
     p.reconciliations.push(reconciliation);
-    return save(next, st, { reconciliation_id: reconciliation.id });
+    return save2(next, st, { reconciliation_id: reconciliation.id });
   }
   if (action === "waive_criterion") {
     owner(actor);
@@ -4716,7 +4836,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     req(w.criterion_index < st.criteria.length && w.criterion_revision === st.revision && p.approval.environments.includes(w.environment), "Current criterion revision and approved environment required");
     st.waivers ||= [];
     st.waivers.push({ ...w, generation: st.generation, actor: actor.id, at: now.toISOString() });
-    return save(st, st, { waiver: w });
+    return save2(st, st, { waiver: w });
   }
   if (action === "revise_story") {
     owner(actor);
@@ -4731,7 +4851,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     st.criterion_ids = st.criteria.map((_, i2) => `${st.id}:${st.revision}:${i2}`);
     endAttempt("criterion revision");
     st.status = "Draft";
-    return save(st, st, { snapshot: old });
+    return save2(st, st, { snapshot: old });
   }
   if (action === "exclude_story") {
     owner(actor);
@@ -4742,7 +4862,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     endAttempt("deferred");
     st.generation++;
     st.status = "Draft";
-    return save(st, st);
+    return save2(st, st);
   }
   if (action === "claim_story") {
     owner(actor);
@@ -4757,13 +4877,13 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     st.attempt_id = attempt.id;
     st.claim = { worker, attempt_id: attempt.id, generation: st.generation, token: uid(), expires: new Date(now.getTime() + 36e5).toISOString() };
     st.status = "Implementing";
-    return save(st, st, { attempt });
+    return save2(st, st, { attempt });
   }
   if (action === "renew_claim") {
     owner(actor);
     active(st, a, now);
     st.claim.expires = new Date(now.getTime() + 36e5).toISOString();
-    return save(st, st);
+    return save2(st, st);
   }
   if (action === "recover_claim") {
     owner(actor);
@@ -4775,7 +4895,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     endAttempt("owner recovered stale claim");
     st.generation++;
     st.status = "Backlog";
-    return save(st, st, { recovery_seconds });
+    return save2(st, st, { recovery_seconds });
   }
   if (action === "set_commit") {
     owner(actor);
@@ -4789,7 +4909,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     st.commit = nextCommit;
     if (st.report_health) st.report_health.conflict = st.report_health.observed_commit !== nextCommit;
     st.status = "Implementing";
-    return save(st, st, { commit: st.commit });
+    return save2(st, st, { commit: st.commit });
   }
   if (action === "begin_run") {
     req(p.bindings.includes(a.binding), "Repository binding mismatch");
@@ -4812,7 +4932,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const r = { ...x, check_plan: p.workflow.strict_checks ? x.criteria.flatMap((i2) => (st.proof_plan[i2].checks || []).filter((c) => c.kind === x.kind && x.check_ids?.includes(c.id))) : [], release_id: x.kind === "deployed" ? st.release.id : void 0, target_url: x.kind === "deployed" ? st.release.url : void 0, id: uid(), sequence: st.runs.length + 1, attempt_id: st.attempt_id, criterion_revision: st.revision, generation: st.generation, started_at: now.toISOString(), criterion_ids: x.criteria.map((i2) => st.criterion_ids[i2]) };
     st.runs.push(r);
     invalidate(p, st);
-    return save(r, st, { run_id: r.id });
+    return save2(r, st, { run_id: r.id });
   }
   if (action === "record_evidence") {
     const e = evidenceSchema.parse(a.evidence);
@@ -4829,7 +4949,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     if (r.check_plan?.length && e.result === "pass") req(r.check_plan.every((c) => c.assertions.every((name) => e.assertions?.some((v) => v.check_id === c.id && v.name === name && v.result === "pass"))), "Passing proof requires all reviewed assertion outcomes");
     st.evidence.push({ ...r, ...e, id: event, received_at: now.toISOString(), at: now.toISOString() });
     invalidate(p, st);
-    return save(st, st, { run_id: r.id });
+    return save2(st, st, { run_id: r.id });
   }
   if (action === "record_release") {
     if (actor.role === "owner")
@@ -4845,7 +4965,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     st.releases.push(r);
     st.release = r;
     invalidate(p, st);
-    return save(st, st, { release: r });
+    return save2(st, st, { release: r });
   }
   const makeProposal = (r) => {
     const proposal_id = `SCOPE-${uid()}`;
@@ -4869,7 +4989,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     else r.corrective_story_id = st.id;
     st.status = "Needs rework";
     st.blocker = r.reason;
-    return save(r, st);
+    return save2(r, st);
   }
   if (action === "request_rework") {
     owner(actor);
@@ -4885,7 +5005,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     r.criterion_revision = st.revision;
     st.status = "Needs rework";
     st.blocker = r.reason;
-    return save(st, st, { report: r });
+    return save2(st, st, { report: r });
   }
   if (action === "record_reproduction") {
     owner(actor);
@@ -4895,7 +5015,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     if (reproduction.method === "automated") req(st.evidence.some((e) => e.run_id === reproduction.run_id && e.result === "fail" && e.criterion_revision === st.revision && e.generation >= (r.reproduction_generation || 0) && Date.parse(e.received_at) >= Date.parse(r.at)), "Current report reproduction requires an actual failing run after the report");
     r.reproductions ||= [];
     r.reproductions.push({ ...reproduction, report_id: r.id, criterion_revision: st.revision, generation: st.generation, at: now.toISOString(), actor: actor.id });
-    return save(r, st);
+    return save2(r, st);
   }
   if (action === "resolve_rework_scope") {
     owner(actor);
@@ -4909,7 +5029,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       st.status = st.rework.some((x) => x.previous_status === "Shipped") && eligibility(p, st).deployed ? "Shipped" : "Backlog";
       st.blocker = void 0;
     }
-    return save(st, st, { report_id: r.id });
+    return save2(st, st, { report_id: r.id });
   }
   if (action === "update_status") {
     owner(actor);
@@ -4919,14 +5039,14 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       st.blocked = { previous: st.status, next_action: a.next_action || "Owner reconciliation required", dependency: a.dependency || "unknown" };
       st.blocker = a.reason;
       st.status = "Blocked";
-      return save(st, st, { status: target });
+      return save2(st, st, { status: target });
     }
     if (target === "Draft") {
       str.parse(a.reason);
       endAttempt("draft");
       st.generation++;
       st.status = "Draft";
-      return save(st, st, { status: target });
+      return save2(st, st, { status: target });
     }
     req(!st.proposal_pending, "Proposal must be approved before execution");
     const resumable = ["Ready", "Implementing", "Verifying", "Ready to ship", "Shipped"].includes(st.blocked?.previous) ? [st.blocked.previous] : [];
@@ -4967,7 +5087,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     if (st.status === "Blocked") st.blocked = { ...st.blocked, resolved_at: now.toISOString(), resolved_to: target };
     st.status = target;
     st.blocker = void 0;
-    return save(st, st, { status: target, commit: st.commit });
+    return save2(st, st, { status: target, commit: st.commit });
   }
   throw Error("Unknown action");
 }
@@ -5036,7 +5156,7 @@ var specs = {
   resolve_rework_scope: { description: "OWNER: explicitly classify reported addition as separate scope; retains linked Draft proposal and report history. Cannot dismiss unmet defects.", fields: { ...common, report_id: s, decision: { enum: ["additional_scope"] }, reason: s }, required: ["project_id", "story_id", "event_id", "report_id", "decision", "reason"] },
   workflow: { description: workflowGuide, fields: {}, required: [] },
   list_projects: { description: "List private project bindings.", fields: {}, required: [] },
-  create_project: { description: "Create a bound project. Stable event_id required for retry.", fields: { name: s, binding: s, scope: s, source: s, event_id: s, strict_checks: bool }, required: ["name", "binding", "event_id"] },
+  create_project: { description: "Create a bound project. Stable event_id required for retry.", fields: { name: s, binding: s, scope: s, source: s, event_id: s, strict_checks: bool, delivery_mode: { enum: ["auto", "approval"] } }, required: ["name", "binding", "event_id"] },
   resolve_project: { description: "Resolve one exact repository binding; never infer from title.", fields: { binding: s }, required: ["binding"] },
   get_board: { description: "Get authoritative board and phase-specific completion/coverage summary. Search must not change scope.", fields: { project_id: s, phase: s }, required: ["project_id"] },
   next_story: { description: "Get highest priority eligible story in approved phase.", fields: { project_id: s, phase: s }, required: ["project_id"] },
@@ -5045,7 +5165,7 @@ var specs = {
   set_delivery_mode: { description: "OWNER: choose Auto or Approval mode. Auto prepares unchanged approved scope across epics, retaining all proof/release gates; not a background worker.", fields: { project_id: s, event_id: s, mode: { enum: ["auto", "approval"] }, reason: s }, required: ["project_id", "event_id", "mode", "reason"] },
   advance_queue: { description: "Advance approved Auto-mode stories to Backlog and gate eligible work to Ready; return waiting reasons.", fields: { project_id: s, event_id: s }, required: ["project_id", "event_id"] },
   classify_requirements: { description: "OWNER: repair source classification and traceability without deleting source text. Reference material is not a completion obligation; cross-cutting requirements may map across epics/phases. Does not certify implementation or change acceptance criteria.", fields: { project_id: s, event_id: s, reason: s, entries: array({ type: "object", properties: { id: s, classification: { enum: ["reference", "requirement"] }, stories: array(s), cross_cutting: bool }, required: ["id", "classification", "stories", "cross_cutting"], additionalProperties: false }) }, required: ["project_id", "event_id", "reason", "entries"] },
-  approve_scope: { description: "OWNER ONLY: record explicitly authorized phases and environments. Do not infer approval.", fields: { project_id: s, event_id: s, phases: array(s), environments: array(s), reason: s }, required: ["project_id", "event_id", "phases", "environments", "reason"] },
+  approve_scope: { description: "OWNER ONLY: record explicitly authorized phases and environments. In Auto record the decision without separate approval, respecting user constraints; Approval requires explicit authorization.", fields: { project_id: s, event_id: s, phases: array(s), environments: array(s), reason: s }, required: ["project_id", "event_id", "phases", "environments", "reason"] },
   set_requirements: { description: "OWNER ONLY: register full approved source requirement inventory, including unmapped entries. Deleted source entries remain review items.", fields: { project_id: s, event_id: s, source: s, source_revision: s, requirements: array({ type: "object", properties: { id: s, epic: s, phase: s, stories: array(s), source_path: s, text: s, source_revision: s, classification: { enum: ["reference", "requirement"] }, cross_cutting: bool }, required: ["id", "epic", "phase", "stories"], additionalProperties: false }) }, required: ["project_id", "event_id", "source", "source_revision", "requirements"] },
   exclude_requirement: { description: "OWNER ONLY: authorize exclusion with retained rationale/history.", fields: { project_id: s, event_id: s, requirement_id: s, reason: s }, required: ["project_id", "event_id", "requirement_id", "reason"] },
   exclude_story: { description: 'OWNER ONLY: explicitly defer or remove a child with rationale and the revised phase scope (deferred_to: target phase or "removed"; required on strict projects); exclusion is not shipped.', fields: { ...common, reason: s, deferred_to: s }, required: ["project_id", "story_id", "event_id", "reason"] },
@@ -5064,88 +5184,6 @@ var specs = {
 };
 var toolNames = Object.keys(specs);
 var tools = Object.entries(specs).map(([name, x]) => ({ name, title: name.replaceAll("_", " "), description: x.description, inputSchema: { type: "object", properties: x.fields, required: x.required, additionalProperties: false }, annotations: { readOnlyHint: readActions.includes(name), destructiveHint: !readActions.includes(name) } }));
-
-// src/server/store.ts
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-var SCHEMA_VERSION = 1;
-function dataHome() {
-  if (process.env.COGUMI_KANBAN_HOME) return path.resolve(process.env.COGUMI_KANBAN_HOME);
-  const current = path.join(os.homedir(), ".cogumi-kanban");
-  const legacy = path.join(os.homedir(), ".cogumi-claude-kanban");
-  return fs.existsSync(legacy) ? legacy : current;
-}
-function databasePath() {
-  return path.resolve(process.env.COGUMI_KANBAN_DB || path.join(dataHome(), "kanban.db"));
-}
-function assertNodeVersion(version = process.versions.node) {
-  const [major, minor] = version.split(".").map(Number);
-  if (major < 22 || major === 22 && minor < 13)
-    throw Error(`Cogumi Kanban requires Node.js 22.13 or newer (found ${version})`);
-}
-function openStore(file = databasePath(), { create = true } = {}) {
-  assertNodeVersion();
-  if (file !== ":memory:") {
-    if (!create && !fs.existsSync(file))
-      throw Object.assign(new Error(`Tracker database not found at ${file}; check COGUMI_KANBAN_HOME/COGUMI_KANBAN_DB`), { code: "COGUMI_UNAVAILABLE" });
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 448 });
-    if (!fs.existsSync(file))
-      fs.closeSync(fs.openSync(file, "a", 384));
-    fs.chmodSync(file, 384);
-  }
-  const sql = new DatabaseSync(file);
-  try {
-    prepareSchema(sql, file);
-  } catch (e) {
-    sql.close();
-    throw e;
-  }
-  return {
-    file,
-    close: () => sql.close(),
-    prepare(query) {
-      let values = [];
-      const statement = {
-        bind(...args) {
-          values = args;
-          return statement;
-        },
-        async first() {
-          return sql.prepare(query).get(...values) ?? null;
-        },
-        async run() {
-          const r = sql.prepare(query).run(...values);
-          return { meta: { changes: Number(r.changes) } };
-        }
-      };
-      return statement;
-    }
-  };
-}
-function prepareSchema(sql, file) {
-  sql.exec("PRAGMA busy_timeout=5000");
-  if (file !== ":memory:")
-    sql.exec("PRAGMA journal_mode=WAL");
-  sql.exec(`CREATE TABLE IF NOT EXISTS boards(owner TEXT PRIMARY KEY, revision INTEGER NOT NULL DEFAULT 0, data TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
-  const version = sql.prepare("SELECT value FROM meta WHERE key='schema_version'").get();
-  if (!version)
-    sql.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)").run(String(SCHEMA_VERSION));
-  else if (Number(version.value) > SCHEMA_VERSION)
-    throw Error(`Database schema ${version.value} is newer than this plugin supports (${SCHEMA_VERSION}); update the plugin`);
-}
-var TRANSIENT_SQLITE = /* @__PURE__ */ new Set([5, 6, 10, 13, 14]);
-var TRANSIENT_EXTENDED = /* @__PURE__ */ new Set([264, 520]);
-function isTransient(error) {
-  const e = error;
-  if (typeof e?.errcode === "number" && (TRANSIENT_SQLITE.has(e.errcode & 255) || TRANSIENT_EXTENDED.has(e.errcode)))
-    return true;
-  if (["ENOENT", "EBUSY", "EMFILE", "ENFILE", "ENOSPC", "COGUMI_UNAVAILABLE"].includes(e?.code))
-    return true;
-  return /^Concurrent (update|initialization)/.test(String(e?.message || ""));
-}
 
 // src/server/identity.ts
 import os2 from "node:os";
@@ -5214,7 +5252,7 @@ function overview(project, phase) {
   return {
     generated_at: (/* @__PURE__ */ new Date()).toISOString(),
     states,
-    project: { id: project.id, name: project.name, binding: project.binding, bindings: project.bindings || [project.binding], scope: project.scope, approval: project.approval || null, delivery_mode: project.workflow?.delivery_mode || "approval", strict_checks: !!project.workflow?.strict_checks },
+    project: { id: project.id, name: project.name, binding: project.binding, bindings: project.bindings || [project.binding], scope: project.scope, approval: project.approval || null, delivery_mode: project.workflow?.delivery_mode || "auto", strict_checks: !!project.workflow?.strict_checks },
     phases: [...new Set(project.stories.map((s3) => s3.phase))].sort(),
     epics: [...new Set(project.stories.map((s3) => s3.epic))].sort(),
     summary: summary(project, phase),
@@ -5323,37 +5361,270 @@ var KanbanService = class {
   }
 };
 
-// src/server/binding.ts
-import { spawnSync } from "node:child_process";
-import fs2 from "node:fs";
-import path2 from "node:path";
-function normalizeOrigin(url) {
-  let u = url.trim();
-  const scp = /^(?:[^@/\s]+@)?([^:/\s]+):\/?(?!\/)(.+)$/.exec(u);
-  if (scp && !/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = `https://${scp[1]}/${scp[2]}`;
+// src/server/update-board.ts
+import fs3 from "node:fs";
+import path3 from "node:path";
+import crypto2 from "node:crypto";
+import { spawnSync as spawnSync2 } from "node:child_process";
+function eventsIn(dir, projectId) {
+  if (!fs3.existsSync(dir)) return 0;
+  let count = 0;
+  for (const file of fs3.readdirSync(dir).filter((n) => /^\d+-.+\.json$/.test(n))) {
+    const record = JSON.parse(fs3.readFileSync(path3.join(dir, file), "utf8"));
+    if ((record.event || record).args?.project_id === projectId) count++;
+  }
+  return count;
+}
+async function updateBoard(service, projectId) {
+  const observed = observeBinding();
+  const projects = await service.call("list_projects");
+  const matches = projects.filter((p) => (p.bindings || [p.binding]).includes(observed.binding) && (!projectId || p.id === projectId));
+  if (matches.length !== 1) throw Error("Run update in the bound repository; select --project ID if its binding is ambiguous.");
+  const project = matches[0];
+  const git2 = (args) => {
+    const result = spawnSync2("git", args, { cwd: observed.root, encoding: "utf8" });
+    if (result.status !== 0) throw Error("Could not observe repository state");
+    return result.stdout.trim();
+  };
+  const commit2 = git2(["rev-parse", "HEAD"]);
+  const dirty = !!git2(["status", "--porcelain"]);
+  const outbox = process.env.COGUMI_OUTBOX || path3.join(dataHome(), "outbox");
+  const pending = eventsIn(outbox, project.id), rejected = eventsIn(path3.join(outbox, ".rejected"), project.id);
+  const board = await service.call("get_board", { project_id: project.id });
+  const missingChecks = board.stories.filter((s3) => !["Draft", "Backlog"].includes(s3.status)).flatMap((s3) => [...new Set(s3.proof_plan.flatMap((p) => (p.checks || []).map((c) => c.command)))].flatMap((command) => {
+    const files = command.split(/\s+/).filter((v) => /\.(?:mjs|cjs|js|ts)$/.test(v) && !v.includes("*"));
+    return files.filter((file2) => !fs3.existsSync(path3.resolve(observed.root, file2))).map((file2) => ({ story_id: s3.id, file: file2, code: "missing_check" }));
+  }));
+  const queue = board.workflow?.delivery_mode === "auto" ? await service.call("advance_queue", { project_id: project.id, event_id: crypto2.randomUUID() }) : null;
+  const reconciliation = await service.call("reconcile", { project_id: project.id, event_id: crypto2.randomUUID(), commit: commit2, pending_events: pending });
+  const overview2 = await service.call("board_overview", { project_id: project.id });
+  const report = { project_id: project.id, binding: observed.binding, checked_at: (/* @__PURE__ */ new Date()).toISOString(), delivery_mode: board.workflow?.delivery_mode || "auto", queue, checkout: { commit: commit2, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview2.tracking_health, status_counts: overview2.stories.reduce((a, s3) => {
+    a[s3.status] = (a[s3.status] || 0) + 1;
+    return a;
+  }, {}) };
+  const dir = path3.join(dataHome(), "updates");
+  fs3.mkdirSync(dir, { recursive: true, mode: 448 });
+  const file = path3.join(dir, `update-${project.id}.json`), temp = `${file}.${crypto2.randomUUID()}.tmp`;
+  fs3.writeFileSync(temp, JSON.stringify(report, null, 2), { mode: 384 });
+  fs3.renameSync(temp, file);
+  return { ...report, report_path: file };
+}
+
+// src/server/worker.ts
+function workerArgs(host, session) {
+  if (host === "codex") return session ? ["exec", "resume", "-c", 'approval_policy="never"', "--json", session, "-"] : ["exec", "-c", 'approval_policy="never"', "--sandbox", "workspace-write", "--add-dir", dataHome(), "--json", "-"];
+  if (host === "claude") return ["--print", "--permission-mode", "auto", "--output-format", "stream-json", "--verbose", ...session ? ["--resume", session] : []];
+  throw Error("Worker host must be codex or claude");
+}
+function workerFingerprint(board) {
+  return crypto3.createHash("sha256").update(JSON.stringify({ mode: board.workflow?.delivery_mode, approval: board.approval, stories: board.stories.map((s3) => ({ id: s3.id, status: s3.status, revision: s3.revision, runs: s3.runs?.length, release: s3.release?.id, commit: s3.commit, claim: s3.claim?.attempt_id, expired: s3.claim ? Date.parse(s3.claim.expires) <= Date.now() : false, source_review: s3.source_review, proposal: s3.proposal_pending, plan: s3.proof_plan, dependencies: s3.dependencies })) })).digest("hex");
+}
+function save(file, value) {
+  const tmp = file + "." + crypto3.randomUUID();
+  fs4.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 384 });
+  fs4.renameSync(tmp, file);
+}
+function alive(pid) {
   try {
-    const parsed = new URL(u);
-    if (!["http:", "https:", "ssh:", "git:", "git+ssh:", "ssh+git:"].includes(parsed.protocol)) return u.replace(/\/+$/, "").replace(/\.git$/, "");
-    const pathname = decodeURIComponent(parsed.pathname).replace(/\/+$/, "").replace(/\.git$/, "").replace(/\/+$/, "");
-    const port = parsed.port && ["http:", "https:"].includes(parsed.protocol) ? `:${parsed.port}` : "";
-    return `https://${parsed.hostname.toLowerCase()}${port}${pathname}`;
+    process.kill(pid, 0);
+    return true;
   } catch {
-    return u.replace(/\/+$/, "").replace(/\.git$/, "");
+    return false;
   }
 }
-var git = (cwd, args) => spawnSync("git", args, { cwd, encoding: "utf8" });
-function observeBinding(cwd = process.cwd()) {
-  const top = git(cwd, ["rev-parse", "--show-toplevel"]);
-  if (top.status !== 0) throw Error("Not inside a Git repository");
-  const root = top.stdout.trim();
-  const origin = git(cwd, ["remote", "get-url", "origin"]);
-  if (origin.status === 0 && origin.stdout.trim())
-    return { binding: normalizeOrigin(origin.stdout.trim()), root, origin: origin.stdout.trim() };
-  const common2 = git(cwd, ["rev-parse", "--git-common-dir"]);
-  if (common2.status !== 0) throw Error("Cannot determine Git common directory");
-  const dir = path2.resolve(cwd, common2.stdout.trim());
-  return { binding: `local:${fs2.realpathSync(dir)}`, root, origin: null };
+function xml(s3) {
+  return s3.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]);
 }
+async function workerCommand(args, pluginRoot2) {
+  const action = args[0];
+  const service = new KanbanService();
+  try {
+    const observed = observeBinding();
+    const projects = await service.call("list_projects");
+    const matches = projects.filter((p) => (p.bindings || [p.binding]).includes(observed.binding));
+    if (matches.length !== 1) throw Error("Worker requires exactly one project bound to this repository");
+    const project = matches[0];
+    const dir = path4.join(dataHome(), "workers", project.id);
+    fs4.mkdirSync(dir, { recursive: true, mode: 448 });
+    const file = path4.join(dir, "state.json");
+    let state = fs4.existsSync(file) ? JSON.parse(fs4.readFileSync(file, "utf8")) : {};
+    const label = "com.cogumi.kanban." + project.id;
+    const plist = path4.join(process.env.HOME, "Library", "LaunchAgents", label + ".plist");
+    if (action === "status") return { ...state, supervisor_alive: !!state.pid && alive(state.pid), state_path: file };
+    if (action === "stop") {
+      save(file, { ...state, enabled: false, status: "stopped" });
+      if (process.platform === "darwin" && fs4.existsSync(plist)) {
+        spawnSync3("launchctl", ["bootout", `gui/${process.getuid()}`, plist]);
+        fs4.unlinkSync(plist);
+      }
+      if (process.platform === "linux") spawnSync3("systemctl", ["--user", "disable", "--now", "cogumi-kanban-" + project.id + ".service"]);
+      return { status: "stopped", state_path: file };
+    }
+    if (action === "start") {
+      const board = await service.call("get_board", { project_id: project.id });
+      if (board.workflow.delivery_mode !== "auto") throw Error("Select Auto mode before starting persistent delivery");
+      const hostIndex = args.indexOf("--host");
+      const host = hostIndex >= 0 ? args[hostIndex + 1] : process.env.CLAUDECODE ? "claude" : "codex";
+      workerArgs(host);
+      const command = spawnSync3("which", [host], { encoding: "utf8" });
+      if (command.status !== 0) throw Error(`Install and sign in to the ${host} CLI first`);
+      if (state.enabled && state.pid && alive(state.pid)) return { ...state, status: "already-running" };
+      state = { ...state, host, executable: command.stdout.trim(), root: observed.root, pluginRoot: pluginRoot2, enabled: true, status: "starting", failures: 0 };
+      save(file, state);
+      const argv = [path4.join(pluginRoot2, "dist/cli.mjs"), "worker", "run"];
+      if (process.platform === "darwin") {
+        fs4.mkdirSync(path4.dirname(plist), { recursive: true });
+        fs4.writeFileSync(plist, `<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>${xml(label)}</string><key>ProgramArguments</key><array>${[process.execPath, ...argv].map((x) => "<string>" + xml(x) + "</string>").join("")}</array><key>WorkingDirectory</key><string>${xml(observed.root)}</string><key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(process.env.PATH || "")}</string><key>COGUMI_KANBAN_HOME</key><string>${xml(dataHome())}</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>ThrottleInterval</key><integer>30</integer><key>StandardErrorPath</key><string>${xml(path4.join(dir, "supervisor.log"))}</string></dict></plist>`, { mode: 384 });
+        spawnSync3("launchctl", ["bootout", `gui/${process.getuid()}`, plist]);
+        const loaded = spawnSync3("launchctl", ["bootstrap", `gui/${process.getuid()}`, plist], { encoding: "utf8" });
+        if (loaded.status !== 0) {
+          save(file, { ...state, enabled: false, status: "install-failed" });
+          throw Error("Could not install automatic restart: " + loaded.stderr);
+        }
+        return { status: "started", host, restart: "macOS launch agent", state_path: file };
+      }
+      if (process.platform === "linux") {
+        const unit = "cogumi-kanban-" + project.id + ".service";
+        const unitDir = path4.join(process.env.HOME, ".config", "systemd", "user");
+        fs4.mkdirSync(unitDir, { recursive: true });
+        const quote = (v) => '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%") + '"';
+        fs4.writeFileSync(path4.join(unitDir, unit), `[Unit]
+Description=Cogumi Kanban persistent worker
+[Service]
+WorkingDirectory=${quote(observed.root)}
+ExecStart=${[process.execPath, ...argv].map(quote).join(" ")}
+Environment=${quote("PATH=" + process.env.PATH)}
+Environment=${quote("COGUMI_KANBAN_HOME=" + dataHome())}
+Restart=on-failure
+RestartSec=30
+[Install]
+WantedBy=default.target
+`, { mode: 384 });
+        const reload = spawnSync3("systemctl", ["--user", "daemon-reload"]);
+        const start = reload.status === 0 ? spawnSync3("systemctl", ["--user", "enable", "--now", unit]) : reload;
+        if (start.status !== 0) {
+          save(file, { ...state, enabled: false, status: "install-failed" });
+          throw Error("A working systemd user session is required for automatic restart");
+        }
+        return { status: "started", host, restart: "systemd user service", state_path: file };
+      }
+      const log = fs4.openSync(path4.join(dir, "supervisor.log"), "a", 384);
+      const child2 = spawn(process.execPath, argv, { cwd: observed.root, detached: true, stdio: ["ignore", log, log] });
+      child2.unref();
+      fs4.closeSync(log);
+      return { status: "started", host, restart: "worker process only; install an OS service for supervisor/reboot recovery", state_path: file };
+    }
+    if (action !== "run") throw Error("Usage: worker start [--host codex|claude] | status | stop");
+    const lock = path4.join(dir, "supervisor.lock");
+    try {
+      fs4.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+    } catch {
+      const pid = Number(fs4.readFileSync(lock, "utf8"));
+      if (alive(pid)) return { status: "already-running" };
+      fs4.unlinkSync(lock);
+      fs4.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+    }
+    let child;
+    let stopping = false;
+    const terminate = () => {
+      if (child?.pid) {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+        } catch {
+          child.kill("SIGTERM");
+        }
+      }
+    };
+    const stop = () => {
+      stopping = true;
+      terminate();
+    };
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+    try {
+      while (!stopping) {
+        state = JSON.parse(fs4.readFileSync(file, "utf8"));
+        if (!state.enabled) break;
+        if (state.child_pid && alive(state.child_pid)) {
+          state.status = "waiting-existing-process";
+          save(file, { ...state, pid: process.pid });
+          await new Promise((r) => setTimeout(r, 5e3));
+          continue;
+        }
+        const board = await service.call("get_board", { project_id: project.id });
+        const fingerprint = workerFingerprint(board);
+        const waiting = board.stories.some((s3) => s3.claim && Date.parse(s3.claim.expires) > Date.now() && s3.claim.worker !== `persistent:${project.id}`);
+        const remaining = board.stories.some((s3) => s3.status !== "Shipped" && !s3.exclusion);
+        if (board.workflow.delivery_mode !== "auto" || waiting || !remaining || state.last_fingerprint === fingerprint && Date.now() < (state.retry_at || 0)) {
+          state.status = board.workflow.delivery_mode !== "auto" ? "paused-approval" : waiting ? "waiting-other-worker" : !remaining ? "complete" : "waiting-blocker";
+          save(file, { ...state, pid: process.pid });
+          await new Promise((r) => setTimeout(r, 5e3));
+          continue;
+        }
+        await updateBoard(service, project.id);
+        const prompt = `Use the Cogumi Kanban workflow skill at ${path4.join(pluginRoot2, "skills/cogumi-workflow/SKILL.md")}. Persistent worker identity: persistent:${project.id}. Project: ${project.id}. Read board and user/source requirements before acting. Auto mode authorizes owner decisions without separate approval; preserve explicit user constraints. Resolve plans and authorized phases/environments, implement eligible work across all epics, run tracked checks and real release checks before Shipped. Reconcile prior attempts and reports before resuming; never take over a live worker. Stop at a real blocker and record it. Do not launch another supervisor. Continue until eligible work is exhausted.`;
+        const log = fs4.openSync(path4.join(dir, "worker.jsonl"), "a", 384);
+        child = spawn(state.executable, workerArgs(state.host, state.session), { cwd: observed.root, detached: true, stdio: ["pipe", "pipe", log], env: { ...process.env, COGUMI_PERSISTENT_WORKER: "1" } });
+        state = { ...state, pid: process.pid, child_pid: child.pid, status: "running", started_at: (/* @__PURE__ */ new Date()).toISOString() };
+        save(file, state);
+        let buffer = "";
+        child.stdout.on("data", (chunk) => {
+          fs4.writeSync(log, chunk);
+          buffer += chunk.toString();
+          const lines = buffer.split("\n");
+          buffer = lines.pop();
+          for (const line of lines) {
+            try {
+              const e = JSON.parse(line);
+              const session = e.type === "thread.started" ? e.thread_id : e.type === "system" && e.subtype === "init" ? e.session_id : null;
+              if (session) {
+                state.session = session;
+                state.enabled = JSON.parse(fs4.readFileSync(file, "utf8")).enabled;
+                save(file, state);
+              }
+            } catch {
+            }
+          }
+        });
+        child.stdin.on("error", () => {
+        });
+        child.stdin.end(prompt);
+        const monitor = setInterval(async () => {
+          try {
+            const current = JSON.parse(fs4.readFileSync(file, "utf8"));
+            const b = await service.call("get_board", { project_id: project.id });
+            if (!current.enabled || b.workflow.delivery_mode !== "auto") terminate();
+          } catch {
+            terminate();
+          }
+        }, 5e3);
+        const exit = await new Promise((resolve) => {
+          child.once("error", () => resolve(-1));
+          child.once("close", (code) => resolve(code));
+        });
+        clearInterval(monitor);
+        fs4.closeSync(log);
+        child = null;
+        const latest = JSON.parse(fs4.readFileSync(file, "utf8"));
+        state = { ...state, enabled: latest.enabled, child_pid: null, last_exit: exit, failures: exit === 0 ? 0 : (state.failures || 0) + 1, last_fingerprint: fingerprint, retry_at: Date.now() + (exit === 0 ? 3e5 : Math.min(36e5, 3e4 * 2 ** Math.min(state.failures || 0, 7))), status: exit === 0 ? "reconciling" : "retry-backoff" };
+        save(file, state);
+      }
+    } finally {
+      fs4.unlinkSync(lock);
+      const latest = JSON.parse(fs4.readFileSync(file, "utf8"));
+      save(file, { ...state, enabled: latest.enabled, pid: null, status: "stopped" });
+      process.removeListener("SIGTERM", stop);
+      process.removeListener("SIGINT", stop);
+    }
+    return { status: "stopped" };
+  } finally {
+    service.close();
+  }
+}
+
+// src/cli/main.ts
+import path5 from "node:path";
+import { fileURLToPath } from "node:url";
 
 // src/server/migrate.ts
 import { randomUUID } from "node:crypto";
@@ -5440,55 +5711,6 @@ async function exportBoard(service) {
   return projects;
 }
 
-// src/server/update-board.ts
-import fs3 from "node:fs";
-import path3 from "node:path";
-import crypto2 from "node:crypto";
-import { spawnSync as spawnSync2 } from "node:child_process";
-function eventsIn(dir, projectId) {
-  if (!fs3.existsSync(dir)) return 0;
-  let count = 0;
-  for (const file of fs3.readdirSync(dir).filter((n) => /^\d+-.+\.json$/.test(n))) {
-    const record = JSON.parse(fs3.readFileSync(path3.join(dir, file), "utf8"));
-    if ((record.event || record).args?.project_id === projectId) count++;
-  }
-  return count;
-}
-async function updateBoard(service, projectId) {
-  const observed = observeBinding();
-  const projects = await service.call("list_projects");
-  const matches = projects.filter((p) => (p.bindings || [p.binding]).includes(observed.binding) && (!projectId || p.id === projectId));
-  if (matches.length !== 1) throw Error("Run update in the bound repository; select --project ID if its binding is ambiguous.");
-  const project = matches[0];
-  const git2 = (args) => {
-    const result = spawnSync2("git", args, { cwd: observed.root, encoding: "utf8" });
-    if (result.status !== 0) throw Error("Could not observe repository state");
-    return result.stdout.trim();
-  };
-  const commit2 = git2(["rev-parse", "HEAD"]);
-  const dirty = !!git2(["status", "--porcelain"]);
-  const outbox = process.env.COGUMI_OUTBOX || path3.join(dataHome(), "outbox");
-  const pending = eventsIn(outbox, project.id), rejected = eventsIn(path3.join(outbox, ".rejected"), project.id);
-  const board = await service.call("get_board", { project_id: project.id });
-  const missingChecks = board.stories.filter((s3) => !["Draft", "Backlog"].includes(s3.status)).flatMap((s3) => [...new Set(s3.proof_plan.flatMap((p) => (p.checks || []).map((c) => c.command)))].flatMap((command) => {
-    const files = command.split(/\s+/).filter((v) => /\.(?:mjs|cjs|js|ts)$/.test(v) && !v.includes("*"));
-    return files.filter((file2) => !fs3.existsSync(path3.resolve(observed.root, file2))).map((file2) => ({ story_id: s3.id, file: file2, code: "missing_check" }));
-  }));
-  const queue = board.workflow?.delivery_mode === "auto" ? await service.call("advance_queue", { project_id: project.id, event_id: crypto2.randomUUID() }) : null;
-  const reconciliation = await service.call("reconcile", { project_id: project.id, event_id: crypto2.randomUUID(), commit: commit2, pending_events: pending });
-  const overview2 = await service.call("board_overview", { project_id: project.id });
-  const report = { project_id: project.id, binding: observed.binding, checked_at: (/* @__PURE__ */ new Date()).toISOString(), delivery_mode: board.workflow?.delivery_mode || "approval", queue, checkout: { commit: commit2, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview2.tracking_health, status_counts: overview2.stories.reduce((a, s3) => {
-    a[s3.status] = (a[s3.status] || 0) + 1;
-    return a;
-  }, {}) };
-  const dir = path3.join(dataHome(), "updates");
-  fs3.mkdirSync(dir, { recursive: true, mode: 448 });
-  const file = path3.join(dir, `update-${project.id}.json`), temp = `${file}.${crypto2.randomUUID()}.tmp`;
-  fs3.writeFileSync(temp, JSON.stringify(report, null, 2), { mode: 384 });
-  fs3.renameSync(temp, file);
-  return { ...report, report_path: file };
-}
-
 // src/server/local-board.ts
 import http from "node:http";
 import { randomBytes } from "node:crypto";
@@ -5559,7 +5781,7 @@ ${page}
 }
 
 // src/cli/main.ts
-var pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path4.resolve(path4.dirname(fileURLToPath(import.meta.url)), "..");
+var pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path5.resolve(path5.dirname(fileURLToPath(import.meta.url)), "..");
 function flag(args, name) {
   const i2 = args.indexOf(name);
   if (i2 < 0) return void 0;
@@ -5572,8 +5794,8 @@ function writeOut(file, text) {
     process.stdout.write(text + "\n");
     return;
   }
-  fs4.writeFileSync(file, text, { mode: 384 });
-  console.error(`Wrote ${path4.resolve(file)}`);
+  fs5.writeFileSync(file, text, { mode: 384 });
+  console.error(`Wrote ${path5.resolve(file)}`);
 }
 async function main(argv) {
   process.umask(63);
@@ -5582,6 +5804,9 @@ async function main(argv) {
   const service = new KanbanService();
   try {
     switch (command) {
+      case "worker":
+        console.log(JSON.stringify(await workerCommand(args, pluginRoot), null, 2));
+        return;
       case "doctor": {
         const projects = await service.call("list_projects");
         let binding = null;
@@ -5602,7 +5827,7 @@ async function main(argv) {
       case "import": {
         const file = args.find((a) => !a.startsWith("--"));
         if (!file) throw Error("Usage: import FILE [--replace]");
-        const result = await importBoard(service, JSON.parse(fs4.readFileSync(file, "utf8")), { replace: args.includes("--replace") });
+        const result = await importBoard(service, JSON.parse(fs5.readFileSync(file, "utf8")), { replace: args.includes("--replace") });
         console.log(JSON.stringify(result, null, 2));
         return;
       }
@@ -5623,7 +5848,7 @@ async function main(argv) {
         console.log(JSON.stringify(await updateBoard(service, flag(args, "--project")), null, 2));
         return;
       case "board": {
-        const template = fs4.readFileSync(path4.join(pluginRoot, "board", "kanban-board.html"), "utf8");
+        const template = fs5.readFileSync(path5.join(pluginRoot, "board", "kanban-board.html"), "utf8");
         const board = await serveLocalBoard(template, { service });
         console.log(JSON.stringify({ url: board.url, mode: "local-live", read_only: true }));
         const stop = () => board.server.close();
@@ -5633,7 +5858,7 @@ async function main(argv) {
         return;
       }
       case "snapshot": {
-        const template = fs4.readFileSync(path4.join(pluginRoot, "board", "kanban-board.html"), "utf8");
+        const template = fs5.readFileSync(path5.join(pluginRoot, "board", "kanban-board.html"), "utf8");
         let projectId = flag(args, "--project");
         if (!projectId) {
           const projects = await service.call("list_projects");
@@ -5649,8 +5874,8 @@ async function main(argv) {
         }
         const html = await renderSnapshot(service, template, projectId);
         const safeName = projectId.replace(/[^A-Za-z0-9_.-]/g, "_");
-        const out = flag(args, "--out") || path4.join(dataHome(), "snapshots", `board-${safeName}.html`);
-        fs4.mkdirSync(path4.dirname(out), { recursive: true, mode: 448 });
+        const out = flag(args, "--out") || path5.join(dataHome(), "snapshots", `board-${safeName}.html`);
+        fs5.mkdirSync(path5.dirname(out), { recursive: true, mode: 448 });
         writeOut(out, html);
         return;
       }

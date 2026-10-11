@@ -15,7 +15,7 @@ const tick = (ms = 0) => new Promise(r => setTimeout(r, ms));
 
 async function tracker() {
     const service = new KanbanService(':memory:');
-    const p = await service.call('create_project', { strict_checks: false, name: 'Live Board', binding: 'https://e.test/live', event_id: 'c' });
+    const p = await service.call('create_project', {delivery_mode:'approval', strict_checks: false, name: 'Live Board', binding: 'https://e.test/live', event_id: 'c' });
     const go = (action, args = {}) => service.call(action, { project_id: p.id, binding: p.binding, story_id: 'S1', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { source: 'PRD', source_revision: '1', stories: [{ id: 'S1', title: 'Save profile', epic: 'Onboarding', criteria: ['saved'], proof_plan: [{ type: 'api', expected: 'saved' }] }, { id: 'S2', title: 'Later', epic: 'Onboarding', phase: 'Next', criteria: ['later'] }] });
     await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'ok' });

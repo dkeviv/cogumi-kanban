@@ -5,6 +5,7 @@
 //   import FILE [--replace]      import a ChatGPT-edition board export (PRD MIG 01)
 //   snapshot [--project ID] [--out FILE]   static board HTML with embedded data (PRD UI 01)
 import fs from 'node:fs';
+import { workerCommand } from '../server/worker.ts';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { KanbanService } from '../server/service.ts';
@@ -38,6 +39,8 @@ async function main(argv: string[]) {
     const service = new KanbanService();
     try {
         switch (command) {
+            case 'worker':
+                console.log(JSON.stringify(await workerCommand(args,pluginRoot),null,2));return;
             case 'doctor': {
                 const projects = await service.call('list_projects');
                 let binding: string | null = null;

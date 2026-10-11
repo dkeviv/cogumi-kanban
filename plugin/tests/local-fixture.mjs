@@ -42,7 +42,7 @@ export async function scenario({ strict = false } = {}) {
     const fault = path.join(dir, 'fault.json');
     const env = { COGUMI_KANBAN_HOME: home, COGUMI_TEST_FAULT_FILE: fault, COGUMI_OUTBOX: path.join(dir, 'outbox'), COGUMI_RUNS: path.join(dir, 'runs') };
     const service = new KanbanService(path.join(home, 'kanban.db'));
-    const p = await service.call('create_project', { strict_checks: strict, name: 'Test', binding: BINDING, event_id: 'create' });
+    const p = await service.call('create_project', {delivery_mode:'approval', strict_checks: strict, name: 'Test', binding: BINDING, event_id: 'create' });
     const go = (action, args = {}) => service.call(action, { project_id: p.id, binding: p.binding, story_id: 'S', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { stories: [{ id: 'S', title: 'test', epic: 'E', criteria: ['command behavior'], proof_plan: [{ type: 'logic', expected: 'real command exits and output is captured' }] }] });
     await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'test authorization' });

@@ -88,3 +88,13 @@ Commit the generated `dist/` runtime bundles with source changes. Update synchro
 ## License
 
 [MIT](LICENSE). Packaged runtime includes MIT license text and [third-party notices](plugin/THIRD_PARTY_NOTICES.md).
+
+### Auto mode and persistent delivery
+
+Auto is the default for new projects and existing projects without a recorded mode. Explicit Approval selections are preserved. In Auto, the agent records owner workflow decisions without separate approval, while respecting the user's requested outcome and explicit constraints. Approval requires review of owner decisions. Both retain source, dependency, lease, test and release gates.
+
+Use `/cogumi-kanban:worker start`, `worker status`, or `worker stop` in the product repository. The command detects Codex or Claude; CLI users can run `sh /path/to/plugin/bin/kanban cli worker start --host codex` (or `claude`). The corresponding CLI must be installed and signed in. Start installs a persistent local service. Selecting Auto alone does not launch a second worker.
+
+macOS launch agents and Linux systemd user services restart the supervisor after failure and at login. Linux recovery before login requires systemd lingering configured by the user. The computer must be awake and online. Other platforms need an external service for supervisor/reboot restart. Saved host sessions permit resume. Failures use exponential backoff; unchanged blockers wait five minutes. Another worker's live claim causes waiting. Approval mode interrupts delivery and pauses the service; stop disables it. Private status and logs live under the data directory's workers folder.
+
+The worker uses Codex's workspace sandbox and noninteractive approval policy, or Claude's Auto permission mode. Host security controls remain active and may block operations. Power loss, unavailable services, credentials and usage limits can interrupt delivery.

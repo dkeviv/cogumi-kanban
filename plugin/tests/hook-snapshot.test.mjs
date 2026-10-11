@@ -31,7 +31,7 @@ test('hook is silent outside bound repositories and gives context inside one', a
         const service = new KanbanService(path.join(dir, 'home', 'kanban.db'));
         r = await runHook({ session_id: 'sess-1', cwd: dir }, env);
         assert.equal(r.out, '', 'not a repository: silent');
-        const p = await service.call('create_project', { name: 'Bound', binding: BINDING, event_id: 'c' });
+        const p = await service.call('create_project', {delivery_mode:'approval', name: 'Bound', binding: BINDING, event_id: 'c' });
         service.close();
         r = await runHook({ session_id: 'sess-1', cwd: repo }, env);
         assert.equal(r.code, 0, r.err);
@@ -48,7 +48,7 @@ test('hook is silent outside bound repositories and gives context inside one', a
 
 test('snapshot embeds credential-free data safely and is labeled as a snapshot', async () => {
     const service = new KanbanService(':memory:');
-    const p = await service.call('create_project', { name: 'Snap </script><script>alert(1)</script>', binding: 'https://example.test/s', event_id: 'c' });
+    const p = await service.call('create_project', {delivery_mode:'approval', name: 'Snap </script><script>alert(1)</script>', binding: 'https://example.test/s', event_id: 'c' });
     await service.call('import_stories', { project_id: p.id, event_id: 'i', stories: [{ id: 'S1', title: 'A $& story', epic: 'E', phase: 'MVP', criteria: ['x'] }, { id: 'S2', title: 'B', epic: 'E', phase: 'Next', criteria: ['y'] }] });
     const template = await fs.readFile('board/kanban-board.html', 'utf8');
     const html = await renderSnapshot(service, template, p.id);
@@ -69,8 +69,8 @@ test('snapshot CLI writes an owner-only file under the data root for the bound p
         const { repo } = await makeRepo(dir);
         const env = { COGUMI_KANBAN_HOME: path.join(dir, 'home') };
         const service = new KanbanService(path.join(dir, 'home', 'kanban.db'));
-        const p = await service.call('create_project', { name: 'Bound', binding: BINDING, event_id: 'c' });
-        await service.call('create_project', { name: 'Other', binding: 'https://example.test/other', event_id: 'd' });
+        const p = await service.call('create_project', {delivery_mode:'approval', name: 'Bound', binding: BINDING, event_id: 'c' });
+        await service.call('create_project', {delivery_mode:'approval', name: 'Other', binding: 'https://example.test/other', event_id: 'd' });
         service.close();
         const r = await invoke('dist/cli.mjs', ['snapshot'], repo, env);
         assert.equal(r.code, 0, r.err);

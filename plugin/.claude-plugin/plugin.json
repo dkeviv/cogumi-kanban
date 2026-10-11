@@ -1,6 +1,6 @@
 {
   "name": "cogumi-kanban",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
   "author": {
     "name": "Vivek"

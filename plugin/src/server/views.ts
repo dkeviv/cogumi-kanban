@@ -63,7 +63,7 @@ function overview(project: any, phase?: string) {
     return {
         generated_at: new Date().toISOString(),
         states,
-        project: { id: project.id, name: project.name, binding: project.binding, bindings: project.bindings || [project.binding], scope: project.scope, approval: project.approval || null, delivery_mode: project.workflow?.delivery_mode || 'approval', strict_checks: !!project.workflow?.strict_checks },
+        project: { id: project.id, name: project.name, binding: project.binding, bindings: project.bindings || [project.binding], scope: project.scope, approval: project.approval || null, delivery_mode: project.workflow?.delivery_mode || 'auto', strict_checks: !!project.workflow?.strict_checks },
         phases: [...new Set(project.stories.map((s: any) => s.phase))].sort(),
         epics: [...new Set(project.stories.map((s: any) => s.epic))].sort(),
         summary: summary(project, phase),

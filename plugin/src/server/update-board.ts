@@ -36,7 +36,7 @@ export async function updateBoard(service: KanbanService, projectId?: string) {
     const queue = board.workflow?.delivery_mode==='auto' ? await service.call('advance_queue',{project_id:project.id,event_id:crypto.randomUUID()}) : null;
     const reconciliation = await service.call('reconcile', { project_id: project.id, event_id: crypto.randomUUID(), commit, pending_events: pending });
     const overview = await service.call('board_overview', { project_id: project.id });
-    const report = { project_id: project.id, binding: observed.binding, checked_at: new Date().toISOString(), delivery_mode:board.workflow?.delivery_mode||'approval', queue, checkout: { commit, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview.tracking_health, status_counts: overview.stories.reduce((a: any, s: any) => { a[s.status] = (a[s.status] || 0) + 1; return a; }, {}) };
+    const report = { project_id: project.id, binding: observed.binding, checked_at: new Date().toISOString(), delivery_mode:board.workflow?.delivery_mode||'auto', queue, checkout: { commit, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview.tracking_health, status_counts: overview.stories.reduce((a: any, s: any) => { a[s.status] = (a[s.status] || 0) + 1; return a; }, {}) };
     const dir = path.join(dataHome(), 'updates'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const file = path.join(dir, `update-${project.id}.json`), temp = `${file}.${crypto.randomUUID()}.tmp`;
     fs.writeFileSync(temp, JSON.stringify(report, null, 2), { mode: 0o600 }); fs.renameSync(temp, file);

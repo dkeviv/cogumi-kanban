@@ -11,7 +11,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 
 - Never mark work complete on a summary. Ready to ship and Shipped are gates the engine enforces from registered runs, evidence and releases.
 - Claim before editing code. Record the exact candidate commit with `set_commit`.
-- OWNER operations require the relevant user authorization. A recorded Auto decision authorizes routine queue transitions and proof-plan preparation for unchanged approved criteria; quote that decision in reason. New scope/criteria, phase or environment expansion, exclusions, waivers and claim takeover still require approval for that exact decision. Do not ask again for unchanged routine work already authorized by Auto.
+- Inspect delivery mode first (default Auto). In Auto, owner workflow decisions do not require separate user approval: record the decision and rationale, and continue toward the user’s requested outcome. Preserve the user’s explicit constraints; never fabricate proof or interfere with a live worker. In Approval mode, obtain explicit authorization for owner decisions, reusing authorization already supplied. Owner role checks apply in both modes.
 - Never invent URLs, release versions, test outcomes or pending counts. Observe them.
 - User feedback beats a green test. If the user says it is still incomplete, use `request_rework`.
 - Write nothing tracker-related into the product checkout. Reporter configs and provider result files go under the resolved data home’s `configs/` directory (or the scratchpad).
@@ -33,7 +33,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 - With strict checks (the default) each check's `command` must equal the reporter config's `command` joined with single spaces, exactly, and every criterion needs both a `functional` and a `deployed` check.
 - Informal request: `propose_intake` (stories stay Draft), show it, and record the user's decision with `decide_intake`.
 - Deferring or removing a story is an OWNER decision: `exclude_story` with `reason` and `deferred_to` (target phase or `removed`).
-- Owner approves phases and environments with `approve_scope`. Move stories Draft → Backlog → Ready with `update_status` (Ready needs a `reason`; tool errors name any missing field).
+- In Auto record phase/environment decisions without separate approval; in Approval obtain authorization. Use `approve_scope`. Move stories Draft → Backlog → Ready with `update_status` (Ready needs a `reason`; tool errors name any missing field).
 
 ## 4. Claim and implement
 
@@ -84,8 +84,8 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 
 - Blocked: `update_status` Blocked with `reason`, `next_action` and `dependency`. When the blocker clears, move it back to the exact state it interrupted (with the lease if that state needs one); moving it to Backlog ends the attempt instead.
 - `request_rework` (observed/expected/reproduction/classification). Reproduce first with a failing run or `record_reproduction`; old passes never close it.
-- Rejected events: a rejected result is recorded as a blocked run; `before-close` files away rejections nothing waits on and exits 3 only for unresolved ones. Fix the cause and `kanban report requeue EVENT_ID`, or, only with the owner's explicit approval, `kanban report discard EVENT_ID --reason "..."`.
-- Stale claim: `reconcile` with observed commit and `pending_events: 0` (verified), then the owner's `recover_claim`.
+- Rejected events: a rejected result is recorded as a blocked run; `before-close` files away rejections nothing waits on and exits 3 only for unresolved ones. Fix the cause and `kanban report requeue EVENT_ID`, or, in Auto with recorded rationale, or in Approval with explicit authorization, `kanban report discard EVENT_ID --reason "..."`.
+- Stale claim: `reconcile` with observed commit and `pending_events: 0` (verified), then `recover_claim`; Auto permits the reconciled decision without a separate approval. Approval mode requires owner authorization.
 - Finish: `board_overview` for the full phase summary, `project_metrics`, `reconcile`, and report what was saved and what is still blocked.
 
 ## Board
@@ -105,9 +105,9 @@ Use `workflow test CONFIG` for every reviewed proof command, even while implemen
 
 ## Delivery modes
 
-The project explicitly selects Auto or Approval with `set_delivery_mode` (or `/cogumi-kanban:mode auto|approval`). Preserve existing phase/environment authorization. A user's Auto request authorizes routine transitions and execution across all epics within that scope; do not ask again per story or epic. In Auto, approve_scope/import/reconcile and story closure automatically prepare the queue: eligible approved Draft stories enter Backlog; existing Ready gates determine promotion. Source changes, pending proposals, future phases, dependencies and missing plans remain visible. Approval is the default for existing projects until a mode decision is supplied. It requires review of queue transitions rather than automatic promotion.
+The project explicitly selects Auto or Approval with `set_delivery_mode` (or `/cogumi-kanban:mode auto|approval`). Preserve existing phase/environment authorization. A user's Auto request authorizes routine transitions and execution across all epics within that scope; do not ask again per story or epic. In Auto, approve_scope/import/reconcile and story closure automatically prepare the queue: eligible approved Draft stories enter Backlog; existing Ready gates determine promotion. Resolve source review, proposals and phase/environment decisions in Auto without separate approval, respecting the user’s constraints. Dependencies and missing plans remain visible. Auto is the default for new and existing projects without an explicit mode. Preserve an explicit Approval selection. It requires review of queue transitions rather than automatic promotion.
 
-When working in Auto, keep executing the next eligible story after closing each one: update/reconcile, next_story, claim, implement, tracked checks, actual release and deployed acceptance, before-close, Shipped, then the next epic/story. Stop for a real blocker, unsupported host acceptance, user input that is required, or exhausted eligible scope. Do not stop merely to request permission for unchanged approved work. Auto mode does not launch an independent background worker, bypass evidence, recover another worker's claim, or approve future phases.
+When working in Auto, keep executing the next eligible story after closing each one: update/reconcile, next_story, claim, implement, tracked checks, actual release and deployed acceptance, before-close, Shipped, then the next epic/story. Stop for a real blocker, unsupported host acceptance, user input that is required, or exhausted eligible scope. Do not stop merely to request permission for unchanged approved work. Use /cogumi-kanban:worker start to enable persistent delivery and automatic restart. Auto does not bypass evidence or take over live workers. Recover expired attempts only after verified interruption and source/outbox reconciliation.
 
 ## Source classification and cross-cutting traceability
 

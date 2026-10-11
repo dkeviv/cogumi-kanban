@@ -13,7 +13,7 @@ import { A } from './helpers.mjs';
 test('redaction never rewrites identifiers or ordinary words', async () => {
     const service = new KanbanService(':memory:');
     const binding = 'local:/Users/me/code/desk-management-application/.git';
-    const p = await service.call('create_project', { name: 'Desk', binding, event_id: 'task-create-1' });
+    const p = await service.call('create_project', {delivery_mode:'approval', name: 'Desk', binding, event_id: 'task-create-1' });
     assert.equal((await service.call('resolve_project', { binding })).id, p.id);
     await service.call('import_stories', { project_id: p.id, event_id: 'risk-import', source: 'PRD', source_revision: '1', stories: [{ id: 'task-implement-signup-flow', epic: 'Basic authentication', title: 'Basic dashboard layout', criteria: ['Basic authentication works'] }] });
     const s = (await service.call('get_board', { project_id: p.id })).stories[0];
@@ -90,7 +90,7 @@ test('resolving a rejected run twice is recognised as the same record (determini
 
 test('tool errors name missing fields instead of returning a validation blob', async () => {
     const service = new KanbanService(':memory:');
-    const p = await service.call('create_project', { name: 'E', binding: 'https://e.test/e', event_id: 'c' });
+    const p = await service.call('create_project', {delivery_mode:'approval', name: 'E', binding: 'https://e.test/e', event_id: 'c' });
     await service.call('import_stories', { project_id: p.id, event_id: 'i', source: 'P', source_revision: '1', stories: [{ id: 'S', epic: 'E', title: 't', criteria: ['x'], proof_plan: [{ type: 'logic', expected: 'x' }] }] });
     await service.call('approve_scope', { project_id: p.id, event_id: 'a', phases: ['MVP'], environments: ['local'], reason: 'ok' });
     await service.call('update_status', { project_id: p.id, story_id: 'S', event_id: 'b', status: 'Backlog' });
@@ -100,7 +100,7 @@ test('tool errors name missing fields instead of returning a validation blob', a
 
 test('exports carry no lease tokens', async () => {
     const service = new KanbanService(':memory:');
-    const p = await service.call('create_project', { strict_checks: false, name: 'X', binding: 'https://e.test/x', event_id: 'c' });
+    const p = await service.call('create_project', {delivery_mode:'approval', strict_checks: false, name: 'X', binding: 'https://e.test/x', event_id: 'c' });
     const go = (action, args = {}) => service.call(action, { project_id: p.id, binding: p.binding, story_id: 'S', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { source: 'P', source_revision: '1', stories: [{ id: 'S', epic: 'E', title: 't', criteria: ['x'], proof_plan: [{ type: 'logic', expected: 'x' }] }] });
     await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'ok' });

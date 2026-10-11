@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "cogumi-kanban",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
   "author": {
     "name": "Vivek"

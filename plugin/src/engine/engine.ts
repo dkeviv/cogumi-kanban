@@ -45,6 +45,7 @@ function migrate(b: Board,now:Date) {
         p.intakes ||= [];
         p.sessions ||= [];
         p.workflow ||= { strict_checks: false };
+        p.workflow.delivery_mode ||= 'auto';
         p.requirements ||= [];
         p.reconciliations ||= [];
         p.audit ||= [];
@@ -155,13 +156,14 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         const key = id.parse(a.event_id);
         const source = a.source === undefined ? '' : str.parse(a.source), scope = a.scope === undefined ? 'No implementation authorized' : str.parse(a.scope);
         const strict_checks=a.strict_checks===undefined?true:z.boolean().parse(a.strict_checks);
-        const payload = JSON.stringify({ name, binding, source, scope,...(a.strict_checks===undefined?{}:{strict_checks}) });
+        const delivery_mode=z.enum(['auto','approval']).parse(a.delivery_mode||'auto');
+        const payload = JSON.stringify({ name, binding, source, scope,...(a.strict_checks===undefined?{}:{strict_checks}),...(a.delivery_mode===undefined?{}:{delivery_mode}) });
         if (board.events![key]) {
             req(board.events![key].payload === payload, 'Event ID reused with different payload');
             return board.projects.find(p => p.id === board.events![key].project_id);
         }
         req(!board.projects.some(p => p.bindings.includes(binding)), 'Binding already exists');
-        const p = { id: uid(), name, binding, source, scope, stories: [], events: [], eventRecords: {}, requirements: [], reconciliations: [], audit: [{ actor: actor.id, at: now.toISOString(), action }], approval: null,workflow:{strict_checks},bindings:[binding],threads:[],sessions:[],intakes:[] };
+        const p = { id: uid(), name, binding, source, scope, stories: [], events: [], eventRecords: {}, requirements: [], reconciliations: [], audit: [{ actor: actor.id, at: now.toISOString(), action }], approval: null,workflow:{strict_checks,delivery_mode},bindings:[binding],threads:[],sessions:[],intakes:[] };
         board.projects.push(p);
         board.events![key] = { payload, project_id: p.id };
         return p;
@@ -282,7 +284,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         return save({...session,summary:summary(p),next_story:pending_events===0?dispatch(board,'next_story',{project_id:p.id},now,actor):null});
     }
     if (action === 'configure_workflow') {
-        owner(actor);str.parse(a.reason);p.workflow={strict_checks:z.boolean().parse(a.strict_checks)};
+        owner(actor);str.parse(a.reason);p.workflow={...p.workflow,strict_checks:z.boolean().parse(a.strict_checks)};
         for(const s of p.stories)invalidate(p,s);
         return save(p.workflow);
     }

@@ -92,7 +92,7 @@ test('requeue moves a rejected event back after the cause is fixed', async () =>
 
 test('credentials sent straight through MCP tools are redacted before storage and in views', async () => {
     const service = new KanbanService(':memory:');
-    const p = await service.call('create_project', { strict_checks: false, name: 'R', binding: 'https://e.test/r', event_id: 'c' });
+    const p = await service.call('create_project', {delivery_mode:'approval', strict_checks: false, name: 'R', binding: 'https://e.test/r', event_id: 'c' });
     const go = (action, args = {}) => service.call(action, { project_id: p.id, binding: p.binding, story_id: 'S', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { source: 'P', source_revision: '1', stories: [{ id: 'S', title: 't', epic: 'E', criteria: ['x'], proof_plan: [{ type: 'logic', expected: 'x' }] }] });
     await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'ok' });
@@ -150,7 +150,7 @@ test('hook still runs when the plugin path goes through a symlink', async () => 
         const link = path.join(dir, 'plugin-link');
         await fs.symlink(process.cwd(), link);
         const service = new KanbanService(path.join(dir, 'home', 'kanban.db'));
-        await service.call('create_project', { name: 'Linked', binding: BINDING, event_id: 'c' });
+        await service.call('create_project', {delivery_mode:'approval', name: 'Linked', binding: BINDING, event_id: 'c' });
         service.close();
         const out = await new Promise(resolve => {
             const p = spawn('sh', [path.join(link, 'bin/run-node.sh'), path.join(link, 'dist/hook.mjs')], { env: { ...process.env, COGUMI_KANBAN_HOME: path.join(dir, 'home'), CLAUDE_PLUGIN_ROOT: link } });

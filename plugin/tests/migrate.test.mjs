@@ -13,7 +13,7 @@ import { A } from './helpers.mjs';
 // as the ChatGPT edition's get_board would return it (same engine, Site binding).
 async function chatgptExport() {
     const source = new KanbanService(':memory:');
-    const p = await source.call('create_project', { strict_checks: false, name: 'Legacy Project', binding: 'site:appgprj_123', event_id: 'c' });
+    const p = await source.call('create_project', {delivery_mode:'approval', strict_checks: false, name: 'Legacy Project', binding: 'site:appgprj_123', event_id: 'c' });
     const go = (action, args = {}) => source.call(action, { project_id: p.id, binding: p.binding, story_id: 'S1', event_id: crypto.randomUUID(), ...args });
     await go('import_stories', { stories: [{ id: 'S1', title: 'One', epic: 'E', criteria: ['a'], proof_plan: [{ type: 'logic', expected: 'a' }] }, { id: 'S2', title: 'Two', epic: 'E', criteria: ['b'], proof_plan: [{ type: 'logic', expected: 'b' }] }] });
     await go('approve_scope', { phases: ['MVP'], environments: ['local'], reason: 'ok' });
@@ -70,7 +70,7 @@ test('the old lease token cannot drive work after import; the owner must reconci
 test('binding collisions are refused without partial writes; --replace overwrites an imported project', async () => {
     const { exported, projectId } = await chatgptExport();
     const service = new KanbanService(':memory:');
-    await service.call('create_project', { name: 'Clash', binding: 'site:appgprj_123', event_id: 'x' });
+    await service.call('create_project', {delivery_mode:'approval', name: 'Clash', binding: 'site:appgprj_123', event_id: 'x' });
     await assert.rejects(importBoard(service, exported), /already belongs/);
     assert.equal((await service.call('list_projects')).length, 1);
     service.close();
