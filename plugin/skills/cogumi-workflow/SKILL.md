@@ -25,7 +25,7 @@ The tracker is the `kanban` MCP server of this plugin (tools named `mcp__plugin_
 ## 2. Start or resume a session
 
 1. If a reporter config exists for an active attempt: `kanban workflow observe CONFIG`, then `kanban workflow resume CONFIG`. Stop if it reports a prior worker still active. Exit code 3 means rejected events: their runs were recorded as blocked; read the reasons before continuing.
-2. `start_session` with `thread_id` = the Claude session ID from the hook, the observed `binding`, `commit` (`git rev-parse HEAD`), and the actual `pending_events` and `rejected_events` counts from `kanban workflow observe` (0 only after checking). Strict claims are refused while either is above zero; resolve rejected events first.
+2. `start_session` with `thread_id` = the current host’s actual chat/session ID (from the Claude hook when available), the observed `binding`, `commit` (`git rev-parse HEAD`), and the actual `pending_events` and `rejected_events` counts from `kanban workflow observe` (0 only after checking). Strict claims are refused while either is above zero; resolve rejected events first.
 
 ## 3. Plan
 

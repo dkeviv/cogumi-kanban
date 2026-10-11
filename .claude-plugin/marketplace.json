@@ -1,13 +1,17 @@
 {
   "name": "cogumi",
-  "owner": { "name": "Vivek" },
-  "metadata": { "description": "Cogumi plugins for Claude Code" },
+  "owner": {
+    "name": "Vivek"
+  },
+  "metadata": {
+    "description": "Cogumi plugins for Codex and Claude"
+  },
   "plugins": [
     {
       "name": "cogumi-kanban",
       "source": "./plugin",
-      "description": "Evidence-gated delivery tracker with a local SQLite database and a live Kanban Artifact board.",
-      "version": "2.3.2"
+      "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
+      "version": "2.4.0"
     }
   ]
 }

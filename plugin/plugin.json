@@ -1,0 +1,36 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "cogumi-kanban",
+  "version": "2.4.0",
+  "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
+  "author": {
+    "name": "Vivek"
+  },
+  "keywords": [
+    "kanban",
+    "delivery",
+    "evidence",
+    "workflow",
+    "mcp"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/dkeviv/cogumi-kanban",
+  "repository": "https://github.com/dkeviv/cogumi-kanban",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Cogumi Kanban",
+        "shortDescription": "Local delivery tracking",
+        "longDescription": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
+        "developerName": "Vivek Durairaj",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write",
+          "Interactive"
+        ],
+        "defaultPrompt": "Open Cogumi Kanban and reconcile the local delivery board."
+      }
+    }
+  }
+}

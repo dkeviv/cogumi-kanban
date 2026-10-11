@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "kanban": {
+      "type": "stdio",
+      "command": "sh",
+      "args": [
+        "${PLUGIN_ROOT}/bin/run-node.sh",
+        "${PLUGIN_ROOT}/dist/server.mjs"
+      ],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

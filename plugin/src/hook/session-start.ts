@@ -9,7 +9,7 @@ import { KanbanService } from '../server/service.ts';
 import { observeBinding } from '../server/binding.ts';
 import { dataHome } from '../server/store.ts';
 
-const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function countEvents(dir: string, projectId: string) {
     try {

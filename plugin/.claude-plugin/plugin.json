@@ -1,6 +1,6 @@
 {
   "name": "cogumi-kanban",
-  "version": "2.3.2",
+  "version": "2.4.0",
   "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
   "author": {
     "name": "Vivek"
@@ -11,5 +11,8 @@
     "evidence",
     "workflow",
     "mcp"
-  ]
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/dkeviv/cogumi-kanban",
+  "repository": "https://github.com/dkeviv/cogumi-kanban"
 }

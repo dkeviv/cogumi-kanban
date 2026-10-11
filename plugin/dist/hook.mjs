@@ -5356,7 +5356,7 @@ function observeBinding(cwd = process.cwd()) {
 }
 
 // src/hook/session-start.ts
-var pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path3.resolve(path3.dirname(fileURLToPath(import.meta.url)), "..");
+var pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path3.resolve(path3.dirname(fileURLToPath(import.meta.url)), "..");
 function countEvents(dir, projectId) {
   try {
     return fs3.readdirSync(dir).filter((n) => /^\d+-.+\.json$/.test(n)).filter((n) => {

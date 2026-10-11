@@ -5559,7 +5559,7 @@ ${page}
 }
 
 // src/cli/main.ts
-var pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path4.resolve(path4.dirname(fileURLToPath(import.meta.url)), "..");
+var pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path4.resolve(path4.dirname(fileURLToPath(import.meta.url)), "..");
 function flag(args, name) {
   const i2 = args.indexOf(name);
   if (i2 < 0) return void 0;

@@ -5324,7 +5324,7 @@ var KanbanService = class {
 
 // src/server/mcp.ts
 var SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-var SERVER_INFO = { name: "cogumi-kanban", version: "2.3.2" };
+var SERVER_INFO = { name: "cogumi-kanban", version: "2.4.0" };
 var MAX_MESSAGE = 4e6;
 function instructions(pluginRoot2) {
   return workflowGuide.replaceAll("<plugin>", pluginRoot2);
@@ -5457,7 +5457,7 @@ function serveStdio(service, pluginRoot2, input = process.stdin, output = proces
 }
 
 // src/server/main.ts
-var pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path2.resolve(path2.dirname(fileURLToPath(import.meta.url)), "..");
+var pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path2.resolve(path2.dirname(fileURLToPath(import.meta.url)), "..");
 process.umask(63);
 try {
   assertNodeVersion();

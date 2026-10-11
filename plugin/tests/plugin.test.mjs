@@ -68,3 +68,21 @@ test('launcher refuses an unsuitable Node.js with an actionable message', () => 
     assert.equal(r.status, 127);
     assert.match(r.stderr, /Node\.js 22\.13 or newer/);
 });
+
+test('native portable and Claude manifests share identity, version and MIT licensing', async () => {
+ const portable=await json('plugin.json'),claude=await json('.claude-plugin/plugin.json'),pkg=await json('package.json');
+ for(const key of ['name','version','license'])assert.equal(portable[key],claude[key]);
+ assert.equal(portable.license,'MIT');assert.equal(pkg.license,'MIT');
+ assert.equal(portable.extensions['com.openai'].interface.displayName,'Cogumi Kanban');
+ assert.ok(portable.extensions['com.openai'].interface.shortDescription.length<=30);
+ const mcp=await json('mcp.json'),native=mcp.mcpServers.kanban,legacy=(await json('.mcp.json')).mcpServers.kanban;
+ assert.equal(native.type,'stdio');assert.equal(native.command,legacy.command);
+ for(const arg of native.args)await fs.access(arg.replace('${PLUGIN_ROOT}','.'));
+ assert.deepEqual(native.args.map(a=>a.replace('${PLUGIN_ROOT}','ROOT')),legacy.args.map(a=>a.replace('${CLAUDE_PLUGIN_ROOT}','ROOT')));
+ assert.match(await read('LICENSE'),/MIT License/);assert.match(await read('THIRD_PARTY_NOTICES.md'),/Zod/);
+});
+test('each host command has a native skill entry point without depending on command migration',async()=>{
+ for(const name of ['start','next','status','board','snapshot','import-chatgpt','open','mode']){
+  const skill=await read(`skills/${name}/SKILL.md`);assert.match(skill,new RegExp(`name: ${name}\\n`));assert.match(skill,/resolved.*root|installed.*root|plugin root/i);
+ }
+});

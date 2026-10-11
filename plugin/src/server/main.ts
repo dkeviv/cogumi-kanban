@@ -5,7 +5,7 @@ import { serveStdio } from './mcp.ts';
 import { assertNodeVersion } from './store.ts';
 
 // Bundled to <plugin>/dist/server.mjs, so the plugin root is one level up.
-const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.umask(0o077);
 try {
     assertNodeVersion();

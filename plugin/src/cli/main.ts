@@ -15,7 +15,7 @@ import { updateBoard } from '../server/update-board.ts';
 import { serveLocalBoard } from '../server/local-board.ts';
 import { renderSnapshot } from '../server/snapshot.ts';
 
-const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function flag(args: string[], name: string) {
     const i = args.indexOf(name);
