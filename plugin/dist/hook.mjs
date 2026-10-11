@@ -10,12 +10,82 @@ import fs3 from "node:fs";
 import path3 from "node:path";
 import { fileURLToPath } from "node:url";
 
+// src/engine/delivery-control.ts
+function lastProgress(story2) {
+  return story2.last_progress_at || [...story2.history || []].reverse().find((h) => ["claim_story", "prepare_verification", "revise_story", "set_commit", "begin_run", "record_evidence", "record_release", "request_rework", "recover_claim", "auto_progress"].includes(h.action))?.at || story2.attempts?.at(-1)?.started_at || null;
+}
+function deliveryControl(project, eligible, now = Date.now(), worker) {
+  const tasks = [];
+  for (const s3 of project.stories) {
+    if (s3.exclusion || s3.status === "Shipped") continue;
+    let kind, next_action;
+    const live = s3.claim && Date.parse(s3.claim.expires) > now;
+    const current = (s3.runs || []).filter((r) => r.attempt_id === s3.attempt_id && r.generation === s3.generation && r.criterion_revision === s3.revision && r.commit === s3.commit);
+    const plan2 = s3.proof_plan?.length === s3.criteria.length && s3.proof_plan.every((v) => !project.workflow?.strict_checks || v.evidence_requirement && ["functional", "deployed"].every((k) => v.checks?.some((c) => c.kind === k)));
+    if (s3.claim && !live) {
+      kind = "reconcile_claim";
+      next_action = "Verify the prior worker is interrupted, reconcile source and outbox, then recover the expired claim.";
+    } else if (s3.report_health?.pending_events || s3.report_health?.delivery_error) {
+      kind = "recover_reports";
+      next_action = "Inspect the durable journal and replay only verified interrupted reports.";
+    } else if (s3.source_review || s3.proposal_pending) {
+      kind = "assess_scope";
+      next_action = "Assess retained source changes against user constraints and record the mode-appropriate owner decision.";
+    } else if (!project.approval?.phases.includes(s3.phase)) {
+      kind = "scope_decision";
+      next_action = "Check whether this phase belongs to the user\u2019s requested outcome; record the decision or retain it as future work.";
+    } else if (!plan2) {
+      kind = "prepare_verification";
+      next_action = "Inspect acceptance criteria and repository; register real commands, observable assertions and evidence requirements with prepare_verification before claiming.";
+    } else if (live) {
+      if (!s3.commit) {
+        kind = "record_candidate";
+        next_action = "Finish the claimed implementation and record its exact clean candidate commit.";
+      } else if (current.some((r) => !s3.evidence.some((e) => e.run_id === r.id))) {
+        kind = "recover_run";
+        next_action = "Inspect the unfinished run journal; recover an honest outcome before rerunning.";
+      } else if (!eligible(project, s3).functional) {
+        kind = "verify_functional";
+        next_action = "Run reviewed functional checks through the tracked runner and fix recorded failures.";
+      } else if (!eligible(project, s3).deployed) {
+        kind = "verify_release";
+        next_action = "Record the actual release and run tracked checks against that exact deployed version.";
+      } else {
+        kind = "close_story";
+        next_action = "Run before-close, then mark Shipped with the current lease.";
+      }
+    } else if (s3.status === "Blocked") {
+      kind = "resolve_blocker";
+      next_action = s3.blocked?.next_action || s3.blocker || "Resolve the recorded blocker before resuming.";
+    } else if (s3.dependencies.some((id2) => !project.stories.some((x) => x.id === id2 && x.status === "Shipped" && eligible(project, x).deployed))) {
+      kind = "wait_dependency";
+      next_action = "Finish and verify the prerequisite story first.";
+    } else {
+      kind = "claim_story";
+      next_action = "Advance through readiness gates and claim the next eligible story before coding.";
+    }
+    const at = lastProgress(s3);
+    const stalled = !!live && !!at && now - Date.parse(at) > (project.workflow?.stall_minutes || 30) * 6e4;
+    tasks.push({ id: `${s3.id}:${s3.revision}:${s3.generation}:${kind}`, story_id: s3.id, kind, next_action, assigned_worker: s3.claim?.worker || null, waiting_on_worker: !!live && !!worker && s3.claim.worker !== worker, stalled, last_progress_at: at, priority: s3.priority, active: !!s3.claim });
+  }
+  const counts = {};
+  for (const s3 of project.stories) if (s3.claim) counts[s3.claim.worker] = (counts[s3.claim.worker] || 0) + 1;
+  const over_limit = Object.entries(counts).filter(([_, count]) => Number(count) > (project.workflow?.wip_limit || 1)).map(([worker2, count]) => ({ worker: worker2, count, limit: project.workflow?.wip_limit || 1 }));
+  tasks.sort((a, b) => Number(b.active) - Number(a.active) || a.priority - b.priority || a.story_id.localeCompare(b.story_id));
+  return { over_limit, mode: project.workflow?.delivery_mode || "auto", wip_limit: project.workflow?.wip_limit || 1, tasks, next_task: tasks.find((t) => !t.waiting_on_worker && !["wait_dependency", "scope_decision"].includes(t.kind)) || null, stalled: tasks.filter((t) => t.stalled).map((t) => t.story_id) };
+}
+
 // src/engine/tracking-health.ts
 function trackingHealth(project, now = Date.now()) {
   const issues = [];
+  const counts = {};
+  for (const s3 of project.stories) if (s3.claim) counts[s3.claim.worker] = (counts[s3.claim.worker] || 0) + 1;
   for (const s3 of project.stories) {
     if (s3.exclusion || s3.proposal_pending || ["Draft", "Backlog", "Ready"].includes(s3.status)) continue;
     const add = (code, message) => issues.push({ story_id: s3.id, code, message });
+    if (s3.claim && counts[s3.claim.worker] > (project.workflow?.wip_limit || 1)) add("wip_over_limit", "Worker has multiple unfinished claims; finish or reconcile existing attempts before claiming more.");
+    const progress = lastProgress(s3);
+    if (s3.claim && Date.parse(s3.claim.expires) > now && progress && now - Date.parse(progress) > (project.workflow?.stall_minutes || 30) * 6e4) add("stalled_progress", "No meaningful recorded progress; inspect the worker and next corrective task. Lease renewals do not count.");
     if (s3.claim && Date.parse(s3.claim.expires) <= now) add("expired_claim", "Interrupted: claim expired; reconcile with the worker before recovery.");
     const runs = (s3.runs || []).filter((r) => r.attempt_id === s3.attempt_id && r.generation === s3.generation && r.criterion_revision === s3.revision);
     const evidence = (s3.evidence || []).filter((e) => runs.some((r) => r.id === e.run_id));
@@ -4141,6 +4211,8 @@ PROGRESS CAPTURE: Run "sh <plugin>/bin/kanban cli update" at session start, befo
 FINISH: Read full phase coverage/epic summary, not filtered cards. Inspect current criteria/proof/releases, capture baseline/project_metrics and reconcile. Report saved mutations and remaining blockers accurately. Persistent delivery is available through cli worker start|status|stop. The supervisor resumes its saved host session, restarts after interruption and waits on blocked/no-progress states.
 DELIVERY MODE: Inspect project.workflow.delivery_mode (default auto). Auto is the default mode; selecting it is authorization to continue routine planning, Backlog/Ready preparation and delivery across all epics in already approved phases/environments without asking per story/epic. Prepare missing proof plans for unchanged approved criteria, reconcile, next_story, claim, implement, tracked checks, real release/deployed checks, before-close, Shipped, then continue next eligible story. Queue promotion is automatic on imports/scope approval/reconciliation/closure. Do not stop just because an epic ended. Stop for real blockers or exhausted approved scope; Enable persistent delivery with /cogumi-kanban:worker start. Auto permits owner decisions without separate approval; record rationale and respect explicit user constraints. Recover expired claims only after verified interruption and matching source/outbox reconciliation. Approval mode retains reviewed manual queue transitions. Both modes retain all proof gates.
 SOURCE INVENTORY: Retain title/version/owner metadata as reference classification; retain actual obligations as requirements. Cross-cutting requirements may map across epics/phases. Classify and map with source provenance; uncertain mappings remain visibly unmapped. classify_requirements repairs metadata/traceability without deleting source or certifying implementation. Never remove real requirements to improve counters.
+
+CONTROL LOOP: Call delivery_tasks with your worker ID before planning or claiming. Finish assigned unfinished work first. Prepare missing plans with prepare_verification for the exact current criterion revision; inspect real repository commands/assertions and preserve criteria. One unfinished claim per worker is the default; configure_workflow may record a different wip_limit and stall_minutes. Execute the task\u2019s next_action using tracked checks/releases. Reconcile after each milestone. Lease renewals are not meaningful progress. Do not mask stalls with more claims.
 `;
 
 // src/engine/engine.ts
@@ -4312,7 +4384,7 @@ function summary(p, phase) {
   });
   return { epics, unmapped, coverage_registered: !!p.requirement_source };
 }
-var readActions = ["workflow", "list_projects", "resolve_project", "get_board", "next_story", "preview_import", "project_metrics", "restore_checkpoint"];
+var readActions = ["workflow", "list_projects", "resolve_project", "get_board", "next_story", "delivery_tasks", "preview_import", "project_metrics", "restore_checkpoint"];
 function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   req(actor?.id, "Authenticated actor required");
   migrate(board, now);
@@ -4353,6 +4425,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const attempt = actor.role === "reporter" ? actor.attempt_id : a.attempt_id || st2.attempt_id;
     return { ...st2.checkpoints?.find((x) => x.attempt_id === attempt) || { attempt_id: attempt, sequence: 0, events: [], journals: [] }, current_attempt: attempt === st2.attempt_id && !!st2.claim && Date.parse(st2.claim.expires) > now.getTime(), unfinished_runs: st2.runs.filter((r) => r.attempt_id === attempt && !st2.evidence.some((e) => e.run_id === r.id)), completed_run_ids: st2.evidence.filter((e) => e.attempt_id === attempt).map((e) => e.run_id) };
   }
+  if (action === "delivery_tasks") return deliveryControl(p, eligibility, now.getTime(), a.worker);
   if (action === "project_metrics") return { stories: p.stories.length, prevented_invalid_transitions: (p.rejections || []).filter((x) => x.action === "update_status").length, rejected_requests: (p.rejections || []).length, duplicate_deliveries: p.duplicate_deliveries || 0, recovery_seconds: p.audit.filter((x) => x.action === "recover_claim").map((x) => x.recovery_seconds).filter((x) => typeof x === "number"), qualifying_criteria: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending).reduce((n, s3) => n + (eligibility(p, s3).functional ? s3.criteria.length : 0), 0), required_criteria: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending).reduce((n, s3) => n + s3.criteria.length, 0), verified_releases: p.stories.filter((s3) => eligibility(p, s3).deployed).length, stale_claims: p.stories.filter((s3) => s3.claim && Date.parse(s3.claim.expires) <= now.getTime()).length, open_rework: p.stories.flatMap((s3) => s3.rework).filter((r) => !r.closed_at && !r.resolved_at).length, manual_corrections: p.audit.filter((x) => ["request_rework", "revise_story", "recover_claim"].includes(x.action)).length, recovered_claims: p.audit.filter((x) => x.action === "recover_claim").length, baseline: p.metrics_baseline || null };
   if (action === "get_board")
     return { ...p, metrics: dispatch(board, "project_metrics", { project_id: p.id }, now, actor), summary: summary(p, a.phase), stories: p.stories.map((s3) => ({ ...s3, eligibility: eligibility(p, s3) })) };
@@ -4417,6 +4490,8 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       if (action === "record_evidence" && ["Implementing", "Verifying"].includes(s3.status) && eligibility(p, s3).functional) s3.status = "Ready to ship";
       if (prior !== s3.status) s3.history.push({ at: now.toISOString(), action: "auto_progress", actor: actor.id, from: prior, status: s3.status, reason: "Recorded verification milestone" });
     }
+    if (s3 && ["prepare_verification", "revise_story", "claim_story", "set_commit", "begin_run", "record_evidence", "record_release", "request_rework", "recover_claim"].includes(action)) s3.last_progress_at = now.toISOString();
+    if (action === "reconcile") p.delivery_control = { ...deliveryControl(p, eligibility, now.getTime()), assessed_at: now.toISOString() };
     const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
     p.audit.push(audit);
     if (s3) {
@@ -4492,7 +4567,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   if (action === "configure_workflow") {
     owner(actor);
     str.parse(a.reason);
-    p.workflow = { ...p.workflow, strict_checks: external_exports.boolean().parse(a.strict_checks) };
+    p.workflow = { ...p.workflow, strict_checks: external_exports.boolean().parse(a.strict_checks), ...a.wip_limit === void 0 ? {} : { wip_limit: external_exports.number().int().min(1).max(20).parse(a.wip_limit) }, ...a.stall_minutes === void 0 ? {} : { stall_minutes: external_exports.number().int().min(1).max(1440).parse(a.stall_minutes) } };
     for (const s3 of p.stories) invalidate(p, s3);
     return save(p.workflow);
   }
@@ -4752,7 +4827,21 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     st.status = "Draft";
     return save(st, st);
   }
+  if (action === "prepare_verification") {
+    owner(actor);
+    str.parse(a.reason);
+    req(!st.claim, "Finish or reconcile the existing attempt before changing its verification plan");
+    req(st.revision === a.criterion_revision, "Criteria changed; assess the current revision");
+    const plans = external_exports.array(proof).min(1).parse(a.proof_plan);
+    req(plans.length === st.criteria.length, "Every criterion needs a verification plan");
+    req(plans.every((v) => v.evidence_requirement && ["functional", "deployed"].every((kind) => v.checks?.some((c) => c.kind === kind))), "Real functional/deployed commands, assertions and evidence requirements required");
+    st.proof_plan = plans;
+    if (p.workflow.delivery_mode === "auto") advanceQueue();
+    return save(st, st);
+  }
   if (action === "claim_story") {
+    const wipWorker = str.parse(a.worker);
+    req(p.stories.filter((s3) => s3.id !== st.id && s3.claim?.worker === wipWorker).length < (p.workflow.wip_limit || 1), "Work-in-progress limit reached: finish or reconcile your existing claim first");
     owner(actor);
     req(p.bindings.includes(a.binding), "Repository binding mismatch");
     req(st.status === "Ready" && !st.claim && !st.exclusion, "Story must be Ready and unclaimed");
@@ -5037,7 +5126,7 @@ var specs = {
   add_binding: { description: "OWNER: bind an additional exact repository to the same project; collision-safe.", fields: { project_id: s, event_id: s, binding: s, reason: s }, required: ["project_id", "event_id", "binding", "reason"] },
   associate_thread: { description: "OWNER: associate a known thread or clearly labeled workspace session with shared project.", fields: { project_id: s, event_id: s, binding: s, thread_id: s, reason: s }, required: ["project_id", "event_id", "binding", "thread_id"] },
   start_session: { description: "Start/resume checkpoint from actual checkout/outbox observations (kanban workflow observe); returns unfinished runs, known releases and eligible work. Never guess pending or rejected counts; strict claims need both to be zero.", fields: { project_id: s, event_id: s, binding: s, thread_id: s, commit: s, pending_events: i, rejected_events: i }, required: ["project_id", "event_id", "binding", "thread_id", "commit", "pending_events"] },
-  configure_workflow: { description: "OWNER: require reviewed criterion assertions and workflow checkpoints; legacy records remain available but need current proof.", fields: { project_id: s, event_id: s, strict_checks: bool, reason: s }, required: ["project_id", "event_id", "strict_checks", "reason"] },
+  configure_workflow: { description: "OWNER: require reviewed criterion assertions and workflow checkpoints; legacy records remain available but need current proof.", fields: { project_id: s, event_id: s, strict_checks: bool, wip_limit: i, stall_minutes: i, reason: s }, required: ["project_id", "event_id", "strict_checks", "reason"] },
   propose_intake: { description: "Preserve original informal request and goal; proposed stories remain Draft outside execution and approved-scope denominators.", fields: { project_id: s, event_id: s, request: s, goal: s, source_revision: s, stories: array(story) }, required: ["project_id", "event_id", "request", "goal", "stories"] },
   decide_intake: { description: "OWNER: record reviewed approval/rejection/clarification. Respect authorization already supplied; no repeat approval for unchanged scope.", fields: { project_id: s, event_id: s, intake_id: s, decision: { enum: ["approved", "rejected", "needs_clarification"] }, reason: s }, required: ["project_id", "event_id", "intake_id", "decision", "reason"] },
   project_metrics: { description: "Derived proof/release/stale/rework/recovery metrics with owner-captured baseline.", fields: { project_id: s }, required: ["project_id"] },
@@ -5048,6 +5137,8 @@ var specs = {
   record_reproduction: { description: "OWNER: attach actual failed run or honest manual failure/blocker to an open rework report before fixing.", fields: { ...common, report_id: s, method: { enum: ["manual", "automated"] }, result: { enum: ["fail", "blocked"] }, details: s, run_id: s }, required: ["project_id", "story_id", "event_id", "report_id", "method", "result", "details"] },
   classify_rework: { description: "OWNER: clarify an open ambiguous report as unmet requirement, regression or separate proposed scope. Preserves classification history and requires fresh corrective proof.", fields: { ...common, report_id: s, classification: { enum: ["unmet", "regression", "new_scope"] }, reason: s }, required: ["project_id", "story_id", "event_id", "report_id", "classification", "reason"] },
   resolve_rework_scope: { description: "OWNER: explicitly classify reported addition as separate scope; retains linked Draft proposal and report history. Cannot dismiss unmet defects.", fields: { ...common, report_id: s, decision: { enum: ["additional_scope"] }, reason: s }, required: ["project_id", "story_id", "event_id", "report_id", "decision", "reason"] },
+  delivery_tasks: { description: "Read corrective delivery tasks and next action. Finish existing claims before planning/claiming additional work. Auto records owner decisions without repeated approval.", fields: { project_id: s, worker: s }, required: ["project_id"] },
+  prepare_verification: { description: "OWNER: assess and register reviewed verification plans for unchanged criterion revision before claim. Auto promotes eligible stories; never fabricate checks or outcomes.", fields: { ...common, criterion_revision: i, proof_plan: array(plan), reason: s }, required: ["project_id", "story_id", "event_id", "criterion_revision", "proof_plan", "reason"] },
   workflow: { description: workflowGuide, fields: {}, required: [] },
   list_projects: { description: "List private project bindings.", fields: {}, required: [] },
   create_project: { description: "Create a bound project. Stable event_id required for retry.", fields: { name: s, binding: s, scope: s, source: s, event_id: s, strict_checks: bool, delivery_mode: { enum: ["auto", "approval"] } }, required: ["name", "binding", "event_id"] },
@@ -5248,7 +5339,8 @@ function overview(project, phase) {
     stories: stories.map((s3) => card(project, s3)),
     rejections: (project.rejections || []).slice(-20),
     last_reconciliation: project.reconciliations?.at(-1) || null,
-    tracking_health: trackingHealth({ ...project, stories })
+    tracking_health: trackingHealth({ ...project, stories }),
+    delivery_control: deliveryControl({ ...project, stories }, eligibility)
   };
 }
 function storyDetail(project, storyId) {

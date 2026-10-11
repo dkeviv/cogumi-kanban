@@ -1,4 +1,4 @@
-# Cogumi Claude Kanban — requirements coverage (PRD v2.1)
+# Cogumi Kanban — requirements coverage (PRD v3.0)
 
 Each requirement maps to where it is implemented and which tests verify it. Test names are abbreviated; files are under `plugin/tests/`. "Engine" means `plugin/src/engine/engine.ts` (reused from the ChatGPT edition with its original test suites: `engine`, `completeness`, `bug-fixes`, `review-regressions`, `source-coverage`, `source-import`, `board-view`).
 
@@ -71,3 +71,5 @@ End-to-end: e2e-strict "strict project goes from creation to Shipped by followin
 
 - That the Claude desktop app exposes a plugin-provided MCP server as an Artifact `host:` server, and its consent prompts. The page logic is tested against a stub that follows the published capability contract. A fallback is documented in the README.
 - Periodic stale detection (REC 02) is Next-stage scope.
+
+| CTL 01–06 | delivery-control, prepare_verification, claim WIP gate, supervisor corrective tasks/no-progress pause, board next actions | delivery-control tests; worker; auto-mode; board-page | Implemented; host-dependent AI assessment remains observable work |

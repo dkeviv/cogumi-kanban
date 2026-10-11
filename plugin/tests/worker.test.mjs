@@ -37,10 +37,10 @@ test('real supervisor saves its host session and stops cleanly',async()=>{
   let state;const until=Date.now()+10000;while(Date.now()<until){state=JSON.parse(fs.readFileSync(file));if(state.session&&state.child_pid===null)break;await new Promise(r=>setTimeout(r,100));}
   assert.equal(state.session,'saved-session');assert.equal(state.last_exit,0);assert.ok(state.retry_at>Date.now());
   child.kill('SIGKILL');await new Promise(resolve=>child.once('exit',resolve));
-  state.retry_at=0;fs.writeFileSync(file,JSON.stringify(state));
+  state.retry_at=0;state.no_progress_turns=2;fs.writeFileSync(file,JSON.stringify(state));
   child=spawn(process.execPath,[new URL('../dist/cli.mjs',import.meta.url).pathname,'worker','run'],{cwd:root,env:{...process.env,COGUMI_KANBAN_HOME:home},stdio:'ignore'});
   const restartUntil=Date.now()+10000;while(Date.now()<restartUntil){state=JSON.parse(fs.readFileSync(file));if(state.pid===child.pid&&state.child_pid===null&&state.retry_at>Date.now())break;await new Promise(r=>setTimeout(r,100));}
-  assert.equal(state.pid,child.pid);assert.equal(state.session,'saved-session');assert.equal(fs.readFileSync(path.join(dir,'worker.jsonl'),'utf8').trim().split('\n').length,2);
+  assert.equal(state.pid,child.pid);assert.equal(state.session,'saved-session');assert.equal(state.no_progress_turns,3);assert.equal(state.retry_at,Number.MAX_SAFE_INTEGER);assert.ok(state.delivery_control.tasks.length);assert.equal(fs.readFileSync(path.join(dir,'worker.jsonl'),'utf8').trim().split('\n').length,2);
   fs.writeFileSync(file,JSON.stringify({...state,enabled:false}));const code=await new Promise(resolve=>child.once('exit',resolve));assert.equal(code,0);assert.equal(JSON.parse(fs.readFileSync(file)).enabled,false);assert.equal(fs.existsSync(path.join(dir,'supervisor.lock')),false);
  }finally{child?.kill();service.close();if(old===undefined)delete process.env.COGUMI_KANBAN_HOME;else process.env.COGUMI_KANBAN_HOME=old;fs.rmSync(root,{recursive:true,force:true});}
 });

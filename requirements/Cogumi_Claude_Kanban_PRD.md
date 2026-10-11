@@ -1,3 +1,7 @@
+# Historical PRD v2.1
+
+The consolidated specification is [Cogumi Kanban PRD v3.0](Cogumi_Kanban_PRD.md). This historical version is retained below for provenance.
+
 # Cogumi Claude Kanban — Product Requirements
 
 Version 2.1 | October 7 2026 | Owner Vivek | Aligned with the Claude local-database plan; updated after code and coverage reviews

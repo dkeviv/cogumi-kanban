@@ -13,7 +13,7 @@ export function workerArgs(host:string, session?:string) {
     throw Error('Worker host must be codex or claude');
 }
 export function workerFingerprint(board:any) {
-    return crypto.createHash('sha256').update(JSON.stringify({mode:board.workflow?.delivery_mode,approval:board.approval,stories:board.stories.map((s:any)=>({id:s.id,status:s.status,revision:s.revision,runs:s.runs?.length,release:s.release?.id,commit:s.commit,claim:s.claim?.attempt_id,expired:s.claim?Date.parse(s.claim.expires)<=Date.now():false,source_review:s.source_review,proposal:s.proposal_pending,plan:s.proof_plan,dependencies:s.dependencies}))})).digest('hex');
+    return crypto.createHash('sha256').update(JSON.stringify({mode:board.workflow?.delivery_mode,approval:board.approval,stories:board.stories.map((s:any)=>({id:s.id,status:s.status,revision:s.revision,runs:s.runs?.length,evidence:s.evidence?.length,progress:s.last_progress_at,release:s.release?.id,commit:s.commit,claim:s.claim?.attempt_id,expired:s.claim?Date.parse(s.claim.expires)<=Date.now():false,source_review:s.source_review,proposal:s.proposal_pending,plan:s.proof_plan,dependencies:s.dependencies}))})).digest('hex');
 }
 function save(file:string,value:any) {const tmp=file+'.'+crypto.randomUUID();fs.writeFileSync(tmp,JSON.stringify(value,null,2),{mode:0o600});fs.renameSync(tmp,file);}
 function alive(pid:number) {try{process.kill(pid,0);return true;}catch{return false;}}
@@ -38,7 +38,7 @@ export async function workerCommand(args:string[],pluginRoot:string) {
             const hostIndex=args.indexOf('--host');const host=hostIndex>=0?args[hostIndex+1]:process.env.CLAUDECODE?'claude':'codex';workerArgs(host);
             const command=spawnSync('which',[host],{encoding:'utf8'});if(command.status!==0)throw Error(`Install and sign in to the ${host} CLI first`);
             if(state.enabled&&state.pid&&alive(state.pid))return {...state,status:'already-running'};
-            state={...state,host,executable:command.stdout.trim(),root:observed.root,pluginRoot,enabled:true,status:'starting',failures:0};save(file,state);
+            state={...state,host,executable:command.stdout.trim(),root:observed.root,pluginRoot,enabled:true,status:'starting',failures:0,no_progress_turns:0,retry_at:0};save(file,state);
             const argv=[path.join(pluginRoot,'dist/cli.mjs'),'worker','run'];
             if(process.platform==='darwin') {
                 fs.mkdirSync(path.dirname(plist),{recursive:true});
@@ -69,12 +69,15 @@ export async function workerCommand(args:string[],pluginRoot:string) {
                 if(state.child_pid&&alive(state.child_pid)){state.status='waiting-existing-process';save(file,{...state,pid:process.pid});await new Promise(r=>setTimeout(r,5000));continue;}
                 const board=await service.call('get_board',{project_id:project.id});
                 const fingerprint=workerFingerprint(board);const waiting=board.stories.some((s:any)=>s.claim&&Date.parse(s.claim.expires)>Date.now()&&s.claim.worker!==`persistent:${project.id}`);
+                const control=await service.call('delivery_tasks',{project_id:project.id,worker:`persistent:${project.id}`});
+                if(state.assessed_fingerprint!==fingerprint){await updateBoard(service,project.id);state.assessed_fingerprint=fingerprint;}
+                state.delivery_control=control;
                 const remaining=board.stories.some((s:any)=>s.status!=='Shipped'&&!s.exclusion);
                 if(board.workflow.delivery_mode!=='auto'||waiting||!remaining||(state.last_fingerprint===fingerprint&&Date.now()<(state.retry_at||0))) {
-                    state.status=board.workflow.delivery_mode!=='auto'?'paused-approval':waiting?'waiting-other-worker':!remaining?'complete':'waiting-blocker';save(file,{...state,pid:process.pid});await new Promise(r=>setTimeout(r,5000));continue;
+                    state.status=board.workflow.delivery_mode!=='auto'?'paused-approval':waiting?'waiting-other-worker':!remaining?'complete':state.no_progress_turns>=3?'paused-no-progress':'waiting-blocker';save(file,{...state,pid:process.pid});await new Promise(r=>setTimeout(r,5000));continue;
                 }
                 await updateBoard(service,project.id);
-                const prompt=`Use the Cogumi Kanban workflow skill at ${path.join(pluginRoot,'skills/cogumi-workflow/SKILL.md')}. Persistent worker identity: persistent:${project.id}. Project: ${project.id}. Read board and user/source requirements before acting. Auto mode authorizes owner decisions without separate approval; preserve explicit user constraints. Resolve plans and authorized phases/environments, implement eligible work across all epics, run tracked checks and real release checks before Shipped. Reconcile prior attempts and reports before resuming; never take over a live worker. Stop at a real blocker and record it. Do not launch another supervisor. Continue until eligible work is exhausted.`;
+                const prompt=`Use the Cogumi Kanban workflow skill at ${path.join(pluginRoot,'skills/cogumi-workflow/SKILL.md')}. Persistent worker identity: persistent:${project.id}. Project: ${project.id}. Read board and user/source requirements before acting. Execute these current corrective tasks in order: ${JSON.stringify(control.tasks)}. Finish existing claimed work before additional claims. Prepare missing plans using prepare_verification with actual current criteria, commands, assertions and evidence requirements; do not change criteria just to obtain Ready. All qualifying checks must use workflow test and releases must use workflow release. Auto mode authorizes owner decisions without separate approval; preserve explicit user constraints. Resolve plans and authorized phases/environments, implement eligible work across all epics, run tracked checks and real release checks before Shipped. Reconcile prior attempts and reports before resuming; never take over a live worker. Stop at a real blocker and record it. Do not launch another supervisor. Continue until eligible work is exhausted.`;
                 const log=fs.openSync(path.join(dir,'worker.jsonl'),'a',0o600);
                 child=spawn(state.executable,workerArgs(state.host,state.session),{cwd:observed.root,detached:true,stdio:['pipe','pipe',log],env:{...process.env,COGUMI_PERSISTENT_WORKER:'1'}});
                 state={...state,pid:process.pid,child_pid:child.pid,status:'running',started_at:new Date().toISOString()};save(file,state);
@@ -82,7 +85,8 @@ export async function workerCommand(args:string[],pluginRoot:string) {
                 child.stdin.on('error',()=>{});child.stdin.end(prompt);
                 const monitor=setInterval(async()=>{try{const current=JSON.parse(fs.readFileSync(file,'utf8'));const b=await service.call('get_board',{project_id:project.id});if(!current.enabled||b.workflow.delivery_mode!=='auto')terminate();}catch{terminate();}},5000);
                 const exit=await new Promise<number|null>(resolve=>{child.once('error',()=>resolve(-1));child.once('close',(code:number)=>resolve(code));});clearInterval(monitor);fs.closeSync(log);child=null;
-                const latest=JSON.parse(fs.readFileSync(file,'utf8'));state={...state,enabled:latest.enabled,child_pid:null,last_exit:exit,failures:exit===0?0:(state.failures||0)+1,last_fingerprint:fingerprint,retry_at:Date.now()+(exit===0?300000:Math.min(3600000,30000*2**Math.min(state.failures||0,7))),status:exit===0?'reconciling':'retry-backoff'};save(file,state);
+                const after=workerFingerprint(await service.call('get_board',{project_id:project.id}));state.no_progress_turns=exit===0&&after===fingerprint?(state.no_progress_turns||0)+1:0;
+                const latest=JSON.parse(fs.readFileSync(file,'utf8'));state={...state,enabled:latest.enabled,child_pid:null,last_exit:exit,failures:exit===0?0:(state.failures||0)+1,last_fingerprint:fingerprint,retry_at:state.no_progress_turns>=3?Number.MAX_SAFE_INTEGER:Date.now()+(exit===0?300000:Math.min(3600000,30000*2**Math.min(state.failures||0,7))),status:exit===0?'reconciling':'retry-backoff'};save(file,state);
             }
         } finally {fs.unlinkSync(lock);const latest=JSON.parse(fs.readFileSync(file,'utf8'));save(file,{...state,enabled:latest.enabled,pid:null,status:'stopped'});process.removeListener('SIGTERM',stop);process.removeListener('SIGINT',stop);}
         return {status:'stopped'};

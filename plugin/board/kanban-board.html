@@ -255,10 +255,12 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
   function card(s) {
     const cls = ["card", s.status === "Blocked" ? "s-blocked" : "", s.status === "Needs rework" || s.open_rework ? "s-rework" : "", s.status === "Shipped" && s.eligibility.deployed ? "s-ship" : "", s.eligible_next ? "s-next" : ""].join(" ");
     const readiness = s.readiness_blockers || [];
+    const task = state.overview.delivery_control?.tasks.find(t => t.story_id === s.id);
     const proof = s.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof") : s.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof") : null;
     return el("button", { class: cls, type: "button", onclick: () => openStory(s.id) },
       el("span", { class: "row" }, el("span", { class: "mono" }, s.id), el("span", { class: "count" }, "P" + s.priority)),
       el("span", { class: "t" }, s.title),
+      task ? el("span", {class:"why"}, `${task.stalled ? "Stalled · " : ""}Next: ${task.next_action}`) : null,
       readiness.length ? el("span", {class:"why"}, "Waiting: " + readiness.join("; ")) : null,
       el("span", { class: "sub" }, el("span", {}, s.epic), el("span", {}, s.phase)),
       el("span", { class: "chips" },

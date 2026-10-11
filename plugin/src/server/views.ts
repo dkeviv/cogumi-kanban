@@ -1,5 +1,6 @@
 // Compact, credential-free read models for the board Artifact and for Claude's context.
 // get_board returns every evidence output and lease token; these views do not.
+import { deliveryControl } from '../engine/delivery-control.ts';
 import { trackingHealth } from '../engine/tracking-health.ts';
 import { states, summary, eligibility } from '../engine/engine.ts';
 import { redactValues } from '../engine/checkpoints.ts';
@@ -84,6 +85,7 @@ function overview(project: any, phase?: string) {
         rejections: (project.rejections || []).slice(-20),
         last_reconciliation: project.reconciliations?.at(-1) || null,
         tracking_health: trackingHealth({ ...project, stories }),
+        delivery_control:deliveryControl({...project,stories},eligibility),
     };
 }
 

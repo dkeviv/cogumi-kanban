@@ -1,3 +1,4 @@
+import { deliveryControl } from './delivery-control.ts';
 import { trackingHealth } from './tracking-health.ts';
 import { z } from 'zod';
 import { assertCredentialFree } from './checkpoints.ts';
@@ -140,7 +141,7 @@ function invalidate(p: Project, s: Story) {
     }
 }
 export function summary(p: Project, phase?: string) { const rs = p.requirements.filter((r: any) => r.classification !== 'reference' && (!phase || r.phase === phase)); const unmapped = rs.filter((r: any) => !r.exclusion && (!r.stories.length || r.stories.some((id: string) => !p.stories.some((s: Story) => s.id === id && (r.cross_cutting || (s.phase === r.phase && s.epic === r.epic)))))).map((r: any) => r.id); const ss = p.stories.filter((s: Story) => !phase || s.phase === phase); const epics = [...new Set([...ss.map((s: Story) => s.epic), ...rs.filter((r:any)=>!r.cross_cutting || !r.stories.length).map((r: any) => r.epic)])].map(epic => { const children = ss.filter((s: Story) => s.epic === epic && !s.exclusion && !s.proposal_pending); const reqs = rs.filter((r: any) => r.epic === epic || (r.cross_cutting && r.stories.some((id:string)=>children.some((s:Story)=>s.id===id)))); const unresolved = reqs.filter((r: any) => unmapped.includes(r.id)); const orphan = children.filter((s: Story) => !reqs.some((r: any) => r.stories.includes(s.id))); const shipped = children.filter((s: Story) => s.status === 'Shipped' && eligibility(p, s).deployed); return { epic, total: children.length, shipped: shipped.length, remaining: children.filter((s: Story) => !shipped.includes(s)).map((s: Story) => ({ id: s.id, title: s.title, status: s.status })), unmapped: unresolved.map((r: any) => r.id), unmapped_stories: orphan.map((s: Story) => s.id), proposals:ss.filter((s:Story)=>s.epic===epic&&s.proposal_pending).map((s:Story)=>({id:s.id,title:s.title})), excluded: [...ss.filter((s: Story) => s.epic === epic && s.exclusion).map((s: Story) => ({ id: s.id, ...s.exclusion })), ...reqs.filter((r: any) => r.exclusion).map((r: any) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length }; }); return { epics, unmapped, coverage_registered: !!p.requirement_source }; }
-export const readActions = ['workflow', 'list_projects', 'resolve_project', 'get_board', 'next_story', 'preview_import', 'project_metrics', 'restore_checkpoint'];
+export const readActions = ['workflow', 'list_projects', 'resolve_project', 'get_board', 'next_story', 'delivery_tasks', 'preview_import', 'project_metrics', 'restore_checkpoint'];
 export function dispatch(board: Board, action: string, a: any, now = new Date(), actor?: Actor): any {
     req(actor?.id, 'Authenticated actor required');
     migrate(board,now);
@@ -180,6 +181,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         const attempt=actor.role==='reporter'?actor.attempt_id:a.attempt_id||st.attempt_id;
         return {...(st.checkpoints?.find((x:any)=>x.attempt_id===attempt)||{attempt_id:attempt,sequence:0,events:[],journals:[]}),current_attempt:attempt===st.attempt_id&&!!st.claim&&Date.parse(st.claim.expires)>now.getTime(),unfinished_runs:st.runs.filter((r:any)=>r.attempt_id===attempt&&!st.evidence.some((e:any)=>e.run_id===r.id)),completed_run_ids:st.evidence.filter((e:any)=>e.attempt_id===attempt).map((e:any)=>e.run_id)};
     }
+    if(action==='delivery_tasks')return deliveryControl(p,eligibility,now.getTime(),a.worker);
     if (action === 'project_metrics') return { stories:p.stories.length, prevented_invalid_transitions:(p.rejections||[]).filter((x:any)=>x.action==='update_status').length, rejected_requests:(p.rejections||[]).length, duplicate_deliveries:p.duplicate_deliveries||0, recovery_seconds:p.audit.filter((x:any)=>x.action==='recover_claim').map((x:any)=>x.recovery_seconds).filter((x:any)=>typeof x==='number'), qualifying_criteria:p.stories.filter((s:Story)=>!s.exclusion&&!s.proposal_pending).reduce((n:number,s:Story)=>n+(eligibility(p,s).functional?s.criteria.length:0),0), required_criteria:p.stories.filter((s:Story)=>!s.exclusion&&!s.proposal_pending).reduce((n:number,s:Story)=>n+s.criteria.length,0), verified_releases:p.stories.filter((s:Story)=>eligibility(p,s).deployed).length, stale_claims:p.stories.filter((s:Story)=>s.claim&&Date.parse(s.claim.expires)<=now.getTime()).length, open_rework:p.stories.flatMap((s:Story)=>s.rework).filter((r:any)=>!r.closed_at&&!r.resolved_at).length, manual_corrections:p.audit.filter((x:any)=>['request_rework','revise_story','recover_claim'].includes(x.action)).length, recovered_claims:p.audit.filter((x:any)=>x.action==='recover_claim').length, baseline:p.metrics_baseline||null };
     if (action === 'get_board')
         return { ...p, metrics:dispatch(board,'project_metrics',{project_id:p.id},now,actor), summary: summary(p, a.phase), stories: p.stories.map((s: Story) => ({ ...s, eligibility: eligibility(p, s) })) };
@@ -233,6 +235,8 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
             if(action==='record_evidence' && ['Implementing','Verifying'].includes(s.status) && eligibility(p,s).functional)s.status='Ready to ship';
             if(prior!==s.status)s.history.push({at:now.toISOString(),action:'auto_progress',actor:actor.id,from:prior,status:s.status,reason:'Recorded verification milestone'});
         }
+        if(s && ['prepare_verification','revise_story','claim_story','set_commit','begin_run','record_evidence','record_release','request_rework','recover_claim'].includes(action))s.last_progress_at=now.toISOString();
+        if(action==='reconcile')p.delivery_control={...deliveryControl(p,eligibility,now.getTime()),assessed_at:now.toISOString()};
         const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
         p.audit.push(audit);
         if (s) {
@@ -290,7 +294,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         return save({...session,summary:summary(p),next_story:pending_events===0?dispatch(board,'next_story',{project_id:p.id},now,actor):null});
     }
     if (action === 'configure_workflow') {
-        owner(actor);str.parse(a.reason);p.workflow={...p.workflow,strict_checks:z.boolean().parse(a.strict_checks)};
+        owner(actor);str.parse(a.reason);p.workflow={...p.workflow,strict_checks:z.boolean().parse(a.strict_checks),...(a.wip_limit===undefined?{}:{wip_limit:z.number().int().min(1).max(20).parse(a.wip_limit)}),...(a.stall_minutes===undefined?{}:{stall_minutes:z.number().int().min(1).max(1440).parse(a.stall_minutes)})};
         for(const s of p.stories)invalidate(p,s);
         return save(p.workflow);
     }
@@ -515,7 +519,18 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         st.status = 'Draft';
         return save(st, st);
     }
+    if(action==='prepare_verification') {
+        owner(actor);str.parse(a.reason);req(!st.claim,'Finish or reconcile the existing attempt before changing its verification plan');
+        req(st.revision===a.criterion_revision,'Criteria changed; assess the current revision');
+        const plans=z.array(proof).min(1).parse(a.proof_plan);req(plans.length===st.criteria.length,'Every criterion needs a verification plan');
+        req(plans.every(v=>v.evidence_requirement&&['functional','deployed'].every(kind=>v.checks?.some(c=>c.kind===kind))),'Real functional/deployed commands, assertions and evidence requirements required');
+        st.proof_plan=plans;
+        if(p.workflow.delivery_mode==='auto')advanceQueue();
+        return save(st,st);
+    }
     if (action === 'claim_story') {
+        const wipWorker=str.parse(a.worker);
+        req(p.stories.filter((s:Story)=>s.id!==st.id&&s.claim?.worker===wipWorker).length<(p.workflow.wip_limit||1),'Work-in-progress limit reached: finish or reconcile your existing claim first');
         owner(actor);
         req(p.bindings.includes(a.binding), 'Repository binding mismatch');
         req(st.status === 'Ready' && !st.claim && !st.exclusion, 'Story must be Ready and unclaimed');
