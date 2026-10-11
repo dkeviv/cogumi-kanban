@@ -1,5 +1,5 @@
 ---
-description: Summarize the Cogumi board for this repository without changing anything
+description: Reconcile Cogumi Kanban progress.
 ---
 
-Read-only. Resolve the bound project (see the cogumi-workflow skill), call `board_overview` (phase: $ARGUMENTS if given), and summarize: stories per lifecycle state, what is claimed and by whom, blocked and Needs rework items with reasons, epic completion with remaining stories, unmapped requirements and the last reconciliation time. Do not call any mutating tool.
+Read the cogumi-workflow skill. Kanban is tracking-only. Auto requires no tracker approvals. Read board_overview. Run cli update in the bound repository. Review actual implementation and record all affected stories with record_progress (stable event ID, worker, milestones, summaries and references). Never infer completion from commits alone or execute product checks on behalf of Kanban. In Approval present proposed reports first; approved:true requires exact user authorization. Open the UI with the open skill when requested.

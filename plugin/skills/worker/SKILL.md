@@ -1,6 +1,8 @@
 ---
 name: worker
-description: Start, inspect or stop persistent Cogumi Kanban delivery with automatic restart.
+description: Inspect or stop a legacy worker.
 ---
 
-Resolve the installed plugin root two levels above this skill. Read commands/worker.md under that root. Substitute ${CLAUDE_PLUGIN_ROOT} examples with the actual root. Detect the current host and follow the command in the bound product repository.
+Read the cogumi-workflow skill. Kanban is tracking-only. Auto requires no tracker approvals. Use cli worker status or stop; start and run are disabled. Never launch delivery agents or tests.
+
+Resolve the installed plugin root from PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT, otherwise the directory containing this skill; run sh <plugin root>/bin/kanban cli update. Never hardcode a cache version.

@@ -1,5 +1,18 @@
 # Cogumi Kanban
 
+Local progress tracking for Codex and Claude. Kanban records delivery-agent milestones; it does not run product tests, deploy or launch coding agents.
+
+## Progress workflow (v2.7)
+Auto is the default: routine tracker updates need no approvals. Approval mode stores proposed reports until the user approves the exact update. A goal does not change the selected mode.
+
+Use `record_progress` once for all affected stories at implementation, verification, release, blocker and final-response checkpoints. Supply a stable event ID, worker identity, milestone, summary and actual references. Retry unchanged events safely. CLI agents can use `sh /path/to/plugin/bin/kanban cli progress --file REPORT.json`: it saves the report in an owner-only outbox before delivery, and the update command retries pending reports. Milestones are visibly reported by the agent, separate from independently qualified evidence. Epic counters show Implemented / Verified / Released. A commit alone never establishes completion.
+
+`/cogumi-kanban:update-kanban` reconciles repository/outbox state and missing or stale progress without blocking development. `/cogumi-kanban:open` opens the local board on either host. Auto assesses Ready from criteria and implemented dependencies, without requiring test plans. Changed scope stays Draft until assessed. Codex needs explicit workflow invocation at new session start; Claude receives a session reminder. No guarantee is made for work never reported by an arbitrary chat.
+
+Legacy worker start/run are disabled; status/stop remain for cleanup. Existing local databases and evidence are preserved.
+
+
+
 Local delivery tracking for Codex and Claude. One shared SQLite tracker records story claims, actual check results, releases, rework and requirement coverage. A live Kanban UI shows the same records on your machine. MIT licensed.
 
 ## Requirements
@@ -38,7 +51,7 @@ Claude Desktop does not automatically install Claude Code plugins. You can regis
 | Request | Action |
 | --- | --- |
 | `/cogumi-kanban:open` | Open the UI with host capability detection; `board` is an alias. |
-| `/cogumi-kanban:update` | Reconcile repository observations, queues and proof gaps. |
+| `/cogumi-kanban:update` | Reconcile repository observations, queues and missing/stale progress. |
 | `/cogumi-kanban:mode auto` | Continue routine delivery across already approved scope. |
 | `/cogumi-kanban:mode approval` | Review queue transitions manually. |
 | `/cogumi-kanban:status` | Inspect current delivery status. |
@@ -46,9 +59,7 @@ Claude Desktop does not automatically install Claude Code plugins. You can regis
 
 Command menus differ by host/version. If a command is not listed, invoke the corresponding skill in chat: “Open Cogumi Kanban”, “Update Cogumi Kanban”, or “Set Cogumi Kanban to Auto mode”.
 
-Start by selecting or creating a project bound to the current repository, importing stories and source requirements, and authorizing the phases/environments to implement. Auto mode prepares approved Draft stories as Backlog and promotes them to Ready when reviewed criteria/proof plans and dependencies qualify. The active agent continues across epics; the plugin does not run an independent AI worker. Future phases, real blockers and incomplete proof plans remain visible.
-
-Completed implementation is distinct from verified delivery. Ready to ship requires current, clean, real passing functional evidence. Shipped also requires a matching successful release, deployed checks and the required before-close reconciliation. Direct test commands outside the tracked runner are not automatically captured and cannot qualify a story from a chat summary.
+Start with a repository-bound project, import stories and map source requirements. Auto assesses criteria and dependencies to advance Ready work. Use the coding agent for implementation and tests, then report milestones with record_progress. Proposed or changed scope remains visible until assessed. Historical proof records remain accessible without blocking development.
 
 Source titles and version metadata remain reference records. Actual cross-cutting obligations link across epics/phases; uncertain mappings remain unmapped. Reimports preserve audited classification repairs.
 
@@ -89,16 +100,5 @@ Commit the generated `dist/` runtime bundles with source changes. Update synchro
 
 [MIT](LICENSE). Packaged runtime includes MIT license text and [third-party notices](plugin/THIRD_PARTY_NOTICES.md).
 
-### Auto mode and persistent delivery
-
-Auto is the default for new projects and existing projects without a recorded mode. Explicit Approval selections are preserved. In Auto, the agent records owner workflow decisions without separate approval, while respecting the user's requested outcome and explicit constraints. Approval requires review of owner decisions. Both retain source, dependency, lease, test and release gates.
-
-Use `/cogumi-kanban:worker start`, `worker status`, or `worker stop` in the product repository. The command detects Codex or Claude; CLI users can run `sh /path/to/plugin/bin/kanban cli worker start --host codex` (or `claude`). The corresponding CLI must be installed and signed in. Start installs a persistent local service. Selecting Auto alone does not launch a second worker.
-
-macOS launch agents and Linux systemd user services restart the supervisor after failure and at login. Linux recovery before login requires systemd lingering configured by the user. The computer must be awake and online. Other platforms need an external service for supervisor/reboot restart. Saved host sessions permit resume. Failures use exponential backoff; unchanged blockers wait five minutes. Another worker's live claim causes waiting. Approval mode interrupts delivery and pauses the service; stop disables it. Private status and logs live under the data directory's workers folder.
-
-The worker uses Codex's workspace sandbox and noninteractive approval policy, or Claude's Auto permission mode. Host security controls remain active and may block operations. Power loss, unavailable services, credentials and usage limits can interrupt delivery.
-
-The live board shows completed epic counts, stories in epic lanes across lifecycle states, and readiness blockers. Source revision fingerprints remain in tracker records but are hidden from the normal board. In Auto, a registered check advances Implementing to Verifying; qualifying functional proof advances to Ready to ship. These transitions require current live attempt provenance. Shipped retains release and before-close gates. Missing verification plans require worker assessment, not fabricated checks.
-
-Corrective delivery tasks are available through `delivery_tasks` and persisted at reconciliation. `prepare_verification` records complete check plans for unchanged criteria and promotes eligible Auto stories. Each worker defaults to one unfinished claim. Meaningful-progress stalls default to 30 minutes; lease renewals do not clear them. Three successful worker turns with no record progress pause further retries until records change or explicit service restart. Actual AI planning/check execution still depends on the installed host, credentials and real project capabilities.
+## Tracking responsibilities
+The coding agent performs implementation and verification. Kanban records reports and flags missing or stale updates. Auto never asks for routine tracker approval. Historical qualified-proof APIs remain available for reading/reporting old evidence; they do not define the implementation counter.

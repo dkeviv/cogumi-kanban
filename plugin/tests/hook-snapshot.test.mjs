@@ -39,7 +39,7 @@ test('hook is silent outside bound repositories and gives context inside one', a
         assert.equal(out.hookEventName, 'SessionStart');
         assert.match(out.additionalContext, new RegExp(p.id));
         assert.match(out.additionalContext, /sess-1/);
-        assert.match(out.additionalContext, /bin\/kanban" workflow/);
+        assert.match(out.additionalContext, /cli update/);
         assert.match(out.additionalContext, /0 pending, 0 rejected/);
         r = await runHook('not json at all', env);
         assert.equal(r.code, 0, 'malformed input never blocks a session');

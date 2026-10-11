@@ -1,3 +1,4 @@
+import { milestones, trackingQueue, progressHealth } from './progress.ts';
 import { deliveryControl } from './delivery-control.ts';
 import { trackingHealth } from './tracking-health.ts';
 import { z } from 'zod';
@@ -130,6 +131,7 @@ export function eligibility(p: Project, s: Story) {
     return { functional, deployed: !!deployed, reasons };
 }
 function invalidate(p: Project, s: Story) {
+    if(p.workflow?.tracking_only!==false && milestones(s).reported)return;
     const e = eligibility(p, s);
     if (s.status === 'Shipped' && !e.deployed) {
         s.status = 'Needs rework';
@@ -140,7 +142,7 @@ function invalidate(p: Project, s: Story) {
         s.blocker = 'Current functional proof pending or failed';
     }
 }
-export function summary(p: Project, phase?: string) { const rs = p.requirements.filter((r: any) => r.classification !== 'reference' && (!phase || r.phase === phase)); const unmapped = rs.filter((r: any) => !r.exclusion && (!r.stories.length || r.stories.some((id: string) => !p.stories.some((s: Story) => s.id === id && (r.cross_cutting || (s.phase === r.phase && s.epic === r.epic)))))).map((r: any) => r.id); const ss = p.stories.filter((s: Story) => !phase || s.phase === phase); const epics = [...new Set([...ss.map((s: Story) => s.epic), ...rs.filter((r:any)=>!r.cross_cutting || !r.stories.length).map((r: any) => r.epic)])].map(epic => { const children = ss.filter((s: Story) => s.epic === epic && !s.exclusion && !s.proposal_pending); const reqs = rs.filter((r: any) => r.epic === epic || (r.cross_cutting && r.stories.some((id:string)=>children.some((s:Story)=>s.id===id)))); const unresolved = reqs.filter((r: any) => unmapped.includes(r.id)); const orphan = children.filter((s: Story) => !reqs.some((r: any) => r.stories.includes(s.id))); const shipped = children.filter((s: Story) => s.status === 'Shipped' && eligibility(p, s).deployed); return { epic, total: children.length, shipped: shipped.length, remaining: children.filter((s: Story) => !shipped.includes(s)).map((s: Story) => ({ id: s.id, title: s.title, status: s.status })), unmapped: unresolved.map((r: any) => r.id), unmapped_stories: orphan.map((s: Story) => s.id), proposals:ss.filter((s:Story)=>s.epic===epic&&s.proposal_pending).map((s:Story)=>({id:s.id,title:s.title})), excluded: [...ss.filter((s: Story) => s.epic === epic && s.exclusion).map((s: Story) => ({ id: s.id, ...s.exclusion })), ...reqs.filter((r: any) => r.exclusion).map((r: any) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length }; }); return { epics, unmapped, coverage_registered: !!p.requirement_source }; }
+export function summary(p: Project, phase?: string) { const rs = p.requirements.filter((r: any) => r.classification !== 'reference' && (!phase || r.phase === phase)); const unmapped = rs.filter((r: any) => !r.exclusion && (!r.stories.length || r.stories.some((id: string) => !p.stories.some((s: Story) => s.id === id && (r.cross_cutting || (s.phase === r.phase && s.epic === r.epic)))))).map((r: any) => r.id); const ss = p.stories.filter((s: Story) => !phase || s.phase === phase); const epics = [...new Set([...ss.map((s: Story) => s.epic), ...rs.filter((r:any)=>!r.cross_cutting || !r.stories.length).map((r: any) => r.epic)])].map(epic => { const children = ss.filter((s: Story) => s.epic === epic && !s.exclusion && !s.proposal_pending); const reqs = rs.filter((r: any) => r.epic === epic || (r.cross_cutting && r.stories.some((id:string)=>children.some((s:Story)=>s.id===id)))); const unresolved = reqs.filter((r: any) => unmapped.includes(r.id)); const orphan = children.filter((s: Story) => !reqs.some((r: any) => r.stories.includes(s.id))); const shipped = children.filter((s: Story) => s.status === 'Shipped' && eligibility(p, s).deployed); const counts={implemented:children.filter(s=>milestones(s).implemented).length,verified:children.filter(s=>milestones(s).verified).length,released:children.filter(s=>milestones(s).released).length}; return { ...counts, implemented_complete:children.length>0&&counts.implemented===children.length&&!unresolved.length&&!orphan.length, verified_complete:children.length>0&&counts.verified===children.length&&!unresolved.length&&!orphan.length, released_complete:children.length>0&&counts.released===children.length&&!unresolved.length&&!orphan.length, epic, total: children.length, shipped: shipped.length, remaining: children.filter((s: Story) => !shipped.includes(s)).map((s: Story) => ({ id: s.id, title: s.title, status: s.status })), unmapped: unresolved.map((r: any) => r.id), unmapped_stories: orphan.map((s: Story) => s.id), proposals:ss.filter((s:Story)=>s.epic===epic&&s.proposal_pending).map((s:Story)=>({id:s.id,title:s.title})), excluded: [...ss.filter((s: Story) => s.epic === epic && s.exclusion).map((s: Story) => ({ id: s.id, ...s.exclusion })), ...reqs.filter((r: any) => r.exclusion).map((r: any) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length }; }); return { epics, unmapped, coverage_registered: !!p.requirement_source }; }
 export const readActions = ['workflow', 'list_projects', 'resolve_project', 'get_board', 'next_story', 'delivery_tasks', 'preview_import', 'project_metrics', 'restore_checkpoint'];
 export function dispatch(board: Board, action: string, a: any, now = new Date(), actor?: Actor): any {
     req(actor?.id, 'Authenticated actor required');
@@ -181,12 +183,12 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         const attempt=actor.role==='reporter'?actor.attempt_id:a.attempt_id||st.attempt_id;
         return {...(st.checkpoints?.find((x:any)=>x.attempt_id===attempt)||{attempt_id:attempt,sequence:0,events:[],journals:[]}),current_attempt:attempt===st.attempt_id&&!!st.claim&&Date.parse(st.claim.expires)>now.getTime(),unfinished_runs:st.runs.filter((r:any)=>r.attempt_id===attempt&&!st.evidence.some((e:any)=>e.run_id===r.id)),completed_run_ids:st.evidence.filter((e:any)=>e.attempt_id===attempt).map((e:any)=>e.run_id)};
     }
-    if(action==='delivery_tasks')return deliveryControl(p,eligibility,now.getTime(),a.worker);
+    if(action==='delivery_tasks')return p.workflow.tracking_only===false?deliveryControl(p,eligibility,now.getTime(),a.worker):{tracking_only:true,tasks:[],next_task:null};
     if (action === 'project_metrics') return { stories:p.stories.length, prevented_invalid_transitions:(p.rejections||[]).filter((x:any)=>x.action==='update_status').length, rejected_requests:(p.rejections||[]).length, duplicate_deliveries:p.duplicate_deliveries||0, recovery_seconds:p.audit.filter((x:any)=>x.action==='recover_claim').map((x:any)=>x.recovery_seconds).filter((x:any)=>typeof x==='number'), qualifying_criteria:p.stories.filter((s:Story)=>!s.exclusion&&!s.proposal_pending).reduce((n:number,s:Story)=>n+(eligibility(p,s).functional?s.criteria.length:0),0), required_criteria:p.stories.filter((s:Story)=>!s.exclusion&&!s.proposal_pending).reduce((n:number,s:Story)=>n+s.criteria.length,0), verified_releases:p.stories.filter((s:Story)=>eligibility(p,s).deployed).length, stale_claims:p.stories.filter((s:Story)=>s.claim&&Date.parse(s.claim.expires)<=now.getTime()).length, open_rework:p.stories.flatMap((s:Story)=>s.rework).filter((r:any)=>!r.closed_at&&!r.resolved_at).length, manual_corrections:p.audit.filter((x:any)=>['request_rework','revise_story','recover_claim'].includes(x.action)).length, recovered_claims:p.audit.filter((x:any)=>x.action==='recover_claim').length, baseline:p.metrics_baseline||null };
     if (action === 'get_board')
         return { ...p, metrics:dispatch(board,'project_metrics',{project_id:p.id},now,actor), summary: summary(p, a.phase), stories: p.stories.map((s: Story) => ({ ...s, eligibility: eligibility(p, s) })) };
     if (action === 'next_story')
-        return p.stories.filter((s: Story) => s.status === 'Ready' && p.approval?.phases.includes(s.phase) && (!a.phase || s.phase === a.phase) && !s.exclusion && s.dependencies.every((d: string) => p.stories.some((x: Story) => x.id === d && x.status === 'Shipped' && eligibility(p, x).deployed))).sort((x: Story, y: Story) => x.priority - y.priority)[0] || null;
+        return p.stories.filter((s: Story) => s.status === 'Ready' && (p.workflow.tracking_only!==false || p.approval?.phases.includes(s.phase)) && (!a.phase || s.phase === a.phase) && !s.exclusion && s.dependencies.every((d: string) => p.stories.some((x: Story) => x.id === d && (p.workflow.tracking_only!==false?milestones(x).implemented:x.status === 'Shipped' && eligibility(p, x).deployed)))).sort((x: Story, y: Story) => x.priority - y.priority)[0] || null;
     const proposed = () => {
         req(Array.isArray(a.stories) && a.stories.length > 0 && a.stories.length <= 200, 'Provide 1 to 200 stories');
         const input: z.infer<typeof storySchema>[] = a.stories.map((x: any) => { const old = p.stories.find((s: Story) => s.id === x.id); const base = old ? Object.fromEntries(Object.keys(storySchema.shape).map(k => [k, old[k]])) : {}; return storySchema.parse({ ...base, ...x }); });
@@ -215,6 +217,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
     }
     req(!p.events.includes(event), 'Legacy event ID has no replayable payload; reconcile before reusing it');
     const advanceQueue = () => {
+        if(p.workflow.tracking_only!==false)return {moved:trackingQueue(p),backlog:[],ready:[],waiting:[]};
         const backlog:string[]=[], ready:string[]=[], waiting:any[]=[];
         for (const story of p.stories) {
             if (!p.approval?.phases.includes(story.phase) || story.exclusion || story.proposal_pending || story.source_review) continue;
@@ -236,7 +239,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
             if(prior!==s.status)s.history.push({at:now.toISOString(),action:'auto_progress',actor:actor.id,from:prior,status:s.status,reason:'Recorded verification milestone'});
         }
         if(s && ['prepare_verification','revise_story','claim_story','set_commit','begin_run','record_evidence','record_release','request_rework','recover_claim'].includes(action))s.last_progress_at=now.toISOString();
-        if(action==='reconcile')p.delivery_control={...deliveryControl(p,eligibility,now.getTime()),assessed_at:now.toISOString()};
+        if(action==='reconcile')p.delivery_control=p.workflow.tracking_only===false?{...deliveryControl(p,eligibility,now.getTime()),assessed_at:now.toISOString()}:{tracking_only:true,tasks:[],next_task:null};
         const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
         p.audit.push(audit);
         if (s) {
@@ -248,6 +251,22 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
         p.eventRecords[event] = { payload, result: JSON.parse(JSON.stringify(s === result ? { id: s.id, version: s.version, status: s.status } : result)) };
         return result;
     };
+    if(action==='record_progress') {
+        owner(actor);str.parse(a.worker);
+        const reports=z.array(z.object({story_id:id,milestone:z.enum(['started','implemented','verifying','verified','released','blocked','rework']),summary:str,references:z.array(str).default([]),blocker:z.string().optional()})).min(1).max(200).parse(a.reports);
+        req(new Set(reports.map(x=>x.story_id)).size===reports.length,'Duplicate story reports');
+        for(const report of reports){const s=p.stories.find((x:Story)=>x.id===report.story_id);req(s&&!s.exclusion&&!s.proposal_pending&&!s.source_review,'Story unresolved or excluded');if(s.claim&&Date.parse(s.claim.expires)>now.getTime())req(s.claim.worker===a.worker,'Live claim belongs to another worker');}
+        if(p.workflow.delivery_mode==='approval' && a.approved!==true){p.progress_proposals||=[];p.progress_proposals.push({event_id:event,reports,at:now.toISOString(),worker:a.worker});return save({pending_approval:true,event_id:event});}
+        for(const report of reports){const st=p.stories.find((x:Story)=>x.id===report.story_id)!;
+            const record={...report,revision:st.revision,at:now.toISOString(),actor:actor.id,worker:a.worker,provenance:'agent_report'};
+            st.progress_reports||=[];st.progress_reports.push(record);
+            st.status=({started:'Implementing',implemented:'Verifying',verifying:'Verifying',verified:'Ready to ship',released:'Shipped',blocked:'Blocked',rework:'Needs rework'} as any)[report.milestone];
+            st.blocker=report.blocker||null;st.last_progress_at=record.at;st.updated_at=record.at;st.version++;
+            st.history.push({action:'record_progress',...record});
+        }
+        const queue=p.workflow.delivery_mode==='auto'?trackingQueue(p):[];
+        return save({recorded:reports.map(x=>x.story_id),queue,summary:summary(p)});
+    }
     if (action==='set_delivery_mode') {
         owner(actor); const mode=z.enum(['auto','approval']).parse(a.mode); str.parse(a.reason);
         p.workflow.delivery_mode=mode;
@@ -439,7 +458,7 @@ export function dispatch(board: Board, action: string, a: any, now = new Date(),
             if (s.claim && commitValue && s.commit !== commitValue)
                 r.conflicts.push({ story: s.id, reason: 'Observed checkout differs from candidate' });
         }
-        (r as any).tracking_health = trackingHealth(p, now.getTime());
+        (r as any).tracking_health = p.workflow.tracking_only===false?trackingHealth(p, now.getTime()):progressHealth(p,now.getTime());
         p.reconciliations.push(r);
         return save(r);
     }

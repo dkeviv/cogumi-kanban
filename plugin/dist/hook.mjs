@@ -10,6 +10,39 @@ import fs3 from "node:fs";
 import path3 from "node:path";
 import { fileURLToPath } from "node:url";
 
+// src/engine/progress.ts
+function milestones(s3) {
+  const reports = (s3.progress_reports || []).filter((x) => x.revision === s3.revision);
+  const latest = reports.at(-1);
+  const rank = { started: 0, implemented: 1, verifying: 1, verified: 2, released: 3, blocked: -1, rework: -1 };
+  const invalidated = latest && (s3.history || []).some((h) => ["request_rework", "classify_rework", "intake_withdrawn"].includes(h.action) && Date.parse(h.at) >= Date.parse(latest.at));
+  const reset = reports.map((x) => x.milestone).lastIndexOf("rework");
+  const value = invalidated ? -1 : Math.max(-1, ...reports.slice(reset + 1).map((x) => rank[x.milestone]));
+  return { implemented: value >= 1, verified: value >= 2, released: value >= 3, reported: !!latest, latest: latest || null };
+}
+function trackingQueue(p) {
+  const moved = [];
+  for (const s3 of p.stories) {
+    if (s3.exclusion || s3.proposal_pending || s3.source_review || !["Draft", "Backlog", "Ready"].includes(s3.status)) continue;
+    if (p.approval && !p.approval.phases.includes(s3.phase)) continue;
+    const ready = s3.criteria.length > 0 && (s3.dependencies || []).every((id2) => p.stories.some((d) => d.id === id2 && (d.exclusion || milestones(d).implemented)));
+    const status = ready ? "Ready" : "Backlog";
+    if (status !== s3.status) {
+      moved.push({ story_id: s3.id, from: s3.status, status });
+      s3.status = status;
+      s3.version++;
+    }
+  }
+  return moved;
+}
+function progressHealth(p, now = Date.now()) {
+  return { issues: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending && ["Implementing", "Verifying", "Ready to ship"].includes(s3.status)).flatMap((s3) => {
+    const m = milestones(s3);
+    const at = m.latest?.at || s3.last_progress_at || s3.updated_at;
+    return !m.reported ? [{ story_id: s3.id, code: "missing_progress", message: "No delivery milestone report recorded; use record_progress." }] : at && now - Date.parse(at) > 30 * 6e4 ? [{ story_id: s3.id, code: "stale_progress", message: "Progress report is stale; reconcile with the delivery agent." }] : [];
+  }), blocking: false };
+}
+
 // src/engine/delivery-control.ts
 function lastProgress(story2) {
   return story2.last_progress_at || [...story2.history || []].reverse().find((h) => ["claim_story", "prepare_verification", "revise_story", "set_commit", "begin_run", "record_evidence", "record_release", "request_rework", "recover_claim", "auto_progress"].includes(h.action))?.at || story2.attempts?.at(-1)?.started_at || null;
@@ -4184,35 +4217,14 @@ function assertCredentialFree(value) {
 }
 
 // src/engine/workflow-guide.ts
-var workflowGuide = `You are using Cogumi Kanban, the project delivery workflow for Codex and Claude. All records live in a local SQLite database on this machine. Use one persistent project across sessions. Installing this plugin does not start or keep a worker alive.
-
-INTAKE: For an informal request, extract the user's goal, included/excluded scope, one small story or useful epic groups, and observable acceptance criteria. Use propose_intake to retain the original request, goal, stable story IDs and version. Show the proposal. Respect approval already given in the conversation; decide_intake records the decision without asking again for unchanged authorized work. Ambiguous/additional work remains a proposal outside execution. For existing requirements, use revise_story with the original request and rationale; do not silently add scope. No separate coach or extra LLM service is needed.
-
-SETUP: Observe the repository identity with "sh <plugin>/bin/kanban workflow binding" (normalized git origin URL, or local:<git common directory> when there is no origin; all worktrees share it). Resolve it with resolve_project; ask the user to choose if ambiguous, never guess from a title. create_project only if genuinely new. The binding-to-project mapping lives only in the tracker; write nothing into the product checkout. add_binding explicitly associates additional repositories, not branches/worktrees. Use the Claude session ID (given by the SessionStart hook) as thread_id with associate_thread/start_session; if unavailable, use a clearly labeled stable workspace session identifier. Reporter configuration files are non-secret and live outside product source. Never put credentials in chat, source, config, checkpoints or the tracker.
-
-OWNER TOOLS: Inspect delivery mode first; default Auto. In Auto, make and record owner workflow decisions without asking for separate approval. Preserve the user's explicit constraints and requested outcome. In Approval, obtain explicit authorization for owner decisions, reusing authorization already supplied. Role checks and proof gates apply in both modes. Never take over a live worker or fabricate evidence.
-
-START/RESUME: Read get_board (or board_overview for a compact view) and workflow. Run "sh <plugin>/bin/kanban workflow observe CONFIG" to inspect actual binding, current commit, dirty state, outbox, rejected events and run logs. Recover reports with "resume CONFIG" when an active reporter attempt exists; if a prior run is still active, stop recovery. Unknown prior worker state requires verified interruption. Inspect known provider releases before redeploying. Call start_session with observed binding, commit, session ID and the actual pending and rejected counts from observe; unresolved or rejected reports and conflicts must be investigated. Do not turn a missing signal into success.
-
-PLAN/CLAIM: Register the full source inventory with set_requirements, including unmapped requirements. Preview imports before writing ambiguous changes. Configure strict_checks=true; legacy evidence needs review before requalification. Each criterion needs type, expected outcome, evidence_requirement and reviewed checks: stable check ID, functional/deployed kind, exact command and named observable assertions. Review assertions for actual behavior; successful build/lint or a screenshot is not functionality. Record phases/environments as owner decisions without separate approval in Auto; Approval mode requires authorization; tracker operations do not grant new coding/deployment authority. Ready requires reviewed scope/plans/dependencies. next_story selects eligible priority work. Claim BEFORE coding, with binding, worker, branch/checkout, exact starting commit and acceptance plan. Keep the returned attempt ID and lease token for this session's tool calls only. Continue only within the approved scope.
-
-VERIFY: Record the exact candidate commit with set_commit. Use "sh <plugin>/bin/kanban workflow test CONFIG", which executes the command, registers the run, saves a started checkpoint, heartbeats the lease, records failures/signals/dirty/source drift and queues results in the durable outbox before delivery. check_ids must match the reviewed command and criteria. Actual check code writes [{check_id,name,result}] to the assertion file given in COGUMI_ASSERTION_FILE; never fabricate outcomes from an exit code. Label model/human evaluations separately; their judgments are not deterministic guarantees. Failed/incomplete checks block completion. Outbox replay uses stable event IDs; permanently rejected events are moved aside visibly, the affected run is recorded as blocked, and the cause must be investigated ("kanban report requeue" resends after a fix). Checkpoint files are credential-free. For recovery from loss of the local data directory, configure COGUMI_CHECKPOINT_DIR on separate durable storage. No system can preserve a result that exists only in destroyed local files.
-
-RELEASE: Use the project's actual supported publisher. Wait for terminal provider status. Save its actual provider/deployment_id/version_id/commit_sha/status/observed HTTPS url fields to a JSON file and run "sh <plugin>/bin/kanban workflow release CONFIG PROVIDER_RESULT.json". Never invent URLs or claim provider integration that was not tested. Run prescribed deployed checks targeting that exact version/environment/URL; include the target URL in the command's real assertions. Run "before-close CONFIG", then update_status Shipped with the current lease. Strict projects require a fresh before-close reconciliation. Installing a tracker never authorizes deployment.
-
-REWORK: request_rework retains observed/expected behavior, reproduction and classification. Unmet/regression work reopens with a corrective relation; new scope becomes a separate linked Draft proposal and original completeness stays challenged until the owner resolves classification. For reproducible defects record a failing automated run before fixing, or record_reproduction with honest manual evidence/blocker. New attempt/revision/commit/release proof is required; old passes cannot close it. If the human still reports incompleteness, reopen it even if tests pass. Only the owner resolves or excludes scope.
-
-OPENSPEC: Verify installed format/version first. Git files remain specification authority; use explicit stable requirement/scenario/task/change/path/revision mappings. Reimports preview additions/changes/removals, preserve mapping history and require owner review; checked tasks/archive signals never imply Shipped. Source changes go through the OpenSpec workflow; board writes do not rewrite specifications.
-
-BOARD: In Codex start "sh <plugin>/bin/kanban cli board" as a persistent process and open its actual returned loopback URL with open_in_codex (browser target). It uses the local database and refreshes automatically. The view is read-only; record rework in chat. Never switch to the separately hosted service. In Claude Desktop the board is a Claude Artifact published with /cogumi-kanban:board; it reads this server live and only works in the Claude desktop app on this machine. /cogumi-kanban:snapshot writes a static, clearly labeled snapshot instead.
-
-PROGRESS CAPTURE: Run "sh <plugin>/bin/kanban cli update" at session start, before switching stories, after blockers and before progress reports. The /cogumi-kanban:update command invokes it on demand. It persists reconciliation and checks Git, queues and missing proof files. Direct tests are untracked and cannot qualify; use workflow test CONFIG, which journals start/result, heartbeats and durable delivery. Never infer a pass from missing output or recover another active worker. Record blockers promptly.
-
-FINISH: Read full phase coverage/epic summary, not filtered cards. Inspect current criteria/proof/releases, capture baseline/project_metrics and reconcile. Report saved mutations and remaining blockers accurately. Persistent delivery is available through cli worker start|status|stop. The supervisor resumes its saved host session, restarts after interruption and waits on blocked/no-progress states.
-DELIVERY MODE: Inspect project.workflow.delivery_mode (default auto). Auto is the default mode; selecting it is authorization to continue routine planning, Backlog/Ready preparation and delivery across all epics in already approved phases/environments without asking per story/epic. Prepare missing proof plans for unchanged approved criteria, reconcile, next_story, claim, implement, tracked checks, real release/deployed checks, before-close, Shipped, then continue next eligible story. Queue promotion is automatic on imports/scope approval/reconciliation/closure. Do not stop just because an epic ended. Stop for real blockers or exhausted approved scope; Enable persistent delivery with /cogumi-kanban:worker start. Auto permits owner decisions without separate approval; record rationale and respect explicit user constraints. Recover expired claims only after verified interruption and matching source/outbox reconciliation. Approval mode retains reviewed manual queue transitions. Both modes retain all proof gates.
-SOURCE INVENTORY: Retain title/version/owner metadata as reference classification; retain actual obligations as requirements. Cross-cutting requirements may map across epics/phases. Classify and map with source provenance; uncertain mappings remain visibly unmapped. classify_requirements repairs metadata/traceability without deleting source or certifying implementation. Never remove real requirements to improve counters.
-
-CONTROL LOOP: Call delivery_tasks with your worker ID before planning or claiming. Finish assigned unfinished work first. Prepare missing plans with prepare_verification for the exact current criterion revision; inspect real repository commands/assertions and preserve criteria. One unfinished claim per worker is the default; configure_workflow may record a different wip_limit and stall_minutes. Execute the task\u2019s next_action using tracked checks/releases. Reconcile after each milestone. Lease renewals are not meaningful progress. Do not mask stalls with more claims.
+var workflowGuide = `Cogumi Kanban is a local, passive progress tracker for Codex and Claude. It does not implement features, run tests, deploy, or launch delivery workers.
+Default mode is Auto. In Auto all routine Kanban decisions and progress updates apply without any separate approval. Respect explicit user scope and constraints. In Approval present proposed decisions and obtain approval, reusing existing authorization. A goal never changes the selected mode.
+Resolve the exact repository binding with sh <plugin>/bin/kanban workflow binding and resolve_project. Read board_overview at session start. Do not repeatedly prepare verification plans, claim leases or reconcile between every coding step. Existing evidence and claims remain available as historical records. Never take over another live worker.
+Use record_progress once for all affected stories at natural checkpoints: implementation finished, coding-agent verification finished, release finished, blocker encountered, and before the final response. Supply stable event_id, project_id, stable worker identity, story_id, milestone, summary and actual references (commit, files, check output or release URL). Retries must reuse the identical event and payload. Auto requires no approved argument. Approval stores a proposal; approved:true may be used only for the exact user-approved report.
+Milestones: started -> Implementing; implemented or verifying -> Verifying; verified -> Ready to ship; released -> Shipped; blocked -> Blocked; rework -> Needs rework. Report only achieved acceptance criteria. A commit alone never proves a story implemented. Verified means the coding agent reports actual checks; Kanban never runs them. Independent qualified evidence remains separate. Correct a mistaken completion with rework, preserving history.
+Auto moves unchanged assessed scope to Ready when acceptance criteria exist and dependencies are implemented; otherwise Backlog. Verification plans and deployments do not block development readiness. Source changes or proposed new scope require assessment; Auto records those assessments without approval prompts.
+Epics show separate Implemented, Verified and Released counts. Every required child must reach a milestone and requirement coverage must be mapped before the epic reaches it. Exclusions are never completion. Reports are revision-bound; changed acceptance criteria invalidate current milestones while retaining history.
+Run <plugin>/bin/kanban cli update (or /cogumi-kanban:update-kanban) at session start/resume and before final reporting. It observes repository state and reconciles missing/stale reports without executing tests or blocking coding. Resolve warnings by reviewing real work and recording progress; never infer completion from commits alone. /cogumi-kanban:open opens the local UI, detecting the host. Codex has no native session hook here: explicitly invoke this skill or update command in new sessions. No software can recover unreported work from an arbitrary chat without access to that chat.
 `;
 
 // src/engine/engine.ts
@@ -4361,6 +4373,7 @@ function eligibility(p, s3) {
   return { functional, deployed: !!deployed, reasons };
 }
 function invalidate(p, s3) {
+  if (p.workflow?.tracking_only !== false && milestones(s3).reported) return;
   const e = eligibility(p, s3);
   if (s3.status === "Shipped" && !e.deployed) {
     s3.status = "Needs rework";
@@ -4380,7 +4393,8 @@ function summary(p, phase) {
     const unresolved = reqs.filter((r) => unmapped.includes(r.id));
     const orphan = children.filter((s3) => !reqs.some((r) => r.stories.includes(s3.id)));
     const shipped = children.filter((s3) => s3.status === "Shipped" && eligibility(p, s3).deployed);
-    return { epic, total: children.length, shipped: shipped.length, remaining: children.filter((s3) => !shipped.includes(s3)).map((s3) => ({ id: s3.id, title: s3.title, status: s3.status })), unmapped: unresolved.map((r) => r.id), unmapped_stories: orphan.map((s3) => s3.id), proposals: ss.filter((s3) => s3.epic === epic && s3.proposal_pending).map((s3) => ({ id: s3.id, title: s3.title })), excluded: [...ss.filter((s3) => s3.epic === epic && s3.exclusion).map((s3) => ({ id: s3.id, ...s3.exclusion })), ...reqs.filter((r) => r.exclusion).map((r) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length };
+    const counts = { implemented: children.filter((s3) => milestones(s3).implemented).length, verified: children.filter((s3) => milestones(s3).verified).length, released: children.filter((s3) => milestones(s3).released).length };
+    return { ...counts, implemented_complete: children.length > 0 && counts.implemented === children.length && !unresolved.length && !orphan.length, verified_complete: children.length > 0 && counts.verified === children.length && !unresolved.length && !orphan.length, released_complete: children.length > 0 && counts.released === children.length && !unresolved.length && !orphan.length, epic, total: children.length, shipped: shipped.length, remaining: children.filter((s3) => !shipped.includes(s3)).map((s3) => ({ id: s3.id, title: s3.title, status: s3.status })), unmapped: unresolved.map((r) => r.id), unmapped_stories: orphan.map((s3) => s3.id), proposals: ss.filter((s3) => s3.epic === epic && s3.proposal_pending).map((s3) => ({ id: s3.id, title: s3.title })), excluded: [...ss.filter((s3) => s3.epic === epic && s3.exclusion).map((s3) => ({ id: s3.id, ...s3.exclusion })), ...reqs.filter((r) => r.exclusion).map((r) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length };
   });
   return { epics, unmapped, coverage_registered: !!p.requirement_source };
 }
@@ -4425,12 +4439,12 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const attempt = actor.role === "reporter" ? actor.attempt_id : a.attempt_id || st2.attempt_id;
     return { ...st2.checkpoints?.find((x) => x.attempt_id === attempt) || { attempt_id: attempt, sequence: 0, events: [], journals: [] }, current_attempt: attempt === st2.attempt_id && !!st2.claim && Date.parse(st2.claim.expires) > now.getTime(), unfinished_runs: st2.runs.filter((r) => r.attempt_id === attempt && !st2.evidence.some((e) => e.run_id === r.id)), completed_run_ids: st2.evidence.filter((e) => e.attempt_id === attempt).map((e) => e.run_id) };
   }
-  if (action === "delivery_tasks") return deliveryControl(p, eligibility, now.getTime(), a.worker);
+  if (action === "delivery_tasks") return p.workflow.tracking_only === false ? deliveryControl(p, eligibility, now.getTime(), a.worker) : { tracking_only: true, tasks: [], next_task: null };
   if (action === "project_metrics") return { stories: p.stories.length, prevented_invalid_transitions: (p.rejections || []).filter((x) => x.action === "update_status").length, rejected_requests: (p.rejections || []).length, duplicate_deliveries: p.duplicate_deliveries || 0, recovery_seconds: p.audit.filter((x) => x.action === "recover_claim").map((x) => x.recovery_seconds).filter((x) => typeof x === "number"), qualifying_criteria: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending).reduce((n, s3) => n + (eligibility(p, s3).functional ? s3.criteria.length : 0), 0), required_criteria: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending).reduce((n, s3) => n + s3.criteria.length, 0), verified_releases: p.stories.filter((s3) => eligibility(p, s3).deployed).length, stale_claims: p.stories.filter((s3) => s3.claim && Date.parse(s3.claim.expires) <= now.getTime()).length, open_rework: p.stories.flatMap((s3) => s3.rework).filter((r) => !r.closed_at && !r.resolved_at).length, manual_corrections: p.audit.filter((x) => ["request_rework", "revise_story", "recover_claim"].includes(x.action)).length, recovered_claims: p.audit.filter((x) => x.action === "recover_claim").length, baseline: p.metrics_baseline || null };
   if (action === "get_board")
     return { ...p, metrics: dispatch(board, "project_metrics", { project_id: p.id }, now, actor), summary: summary(p, a.phase), stories: p.stories.map((s3) => ({ ...s3, eligibility: eligibility(p, s3) })) };
   if (action === "next_story")
-    return p.stories.filter((s3) => s3.status === "Ready" && p.approval?.phases.includes(s3.phase) && (!a.phase || s3.phase === a.phase) && !s3.exclusion && s3.dependencies.every((d) => p.stories.some((x) => x.id === d && x.status === "Shipped" && eligibility(p, x).deployed))).sort((x, y) => x.priority - y.priority)[0] || null;
+    return p.stories.filter((s3) => s3.status === "Ready" && (p.workflow.tracking_only !== false || p.approval?.phases.includes(s3.phase)) && (!a.phase || s3.phase === a.phase) && !s3.exclusion && s3.dependencies.every((d) => p.stories.some((x) => x.id === d && (p.workflow.tracking_only !== false ? milestones(x).implemented : x.status === "Shipped" && eligibility(p, x).deployed)))).sort((x, y) => x.priority - y.priority)[0] || null;
   const proposed = () => {
     req(Array.isArray(a.stories) && a.stories.length > 0 && a.stories.length <= 200, "Provide 1 to 200 stories");
     const input = a.stories.map((x) => {
@@ -4463,6 +4477,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   }
   req(!p.events.includes(event), "Legacy event ID has no replayable payload; reconcile before reusing it");
   const advanceQueue = () => {
+    if (p.workflow.tracking_only !== false) return { moved: trackingQueue(p), backlog: [], ready: [], waiting: [] };
     const backlog = [], ready = [], waiting = [];
     for (const story2 of p.stories) {
       if (!p.approval?.phases.includes(story2.phase) || story2.exclusion || story2.proposal_pending || story2.source_review) continue;
@@ -4491,7 +4506,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       if (prior !== s3.status) s3.history.push({ at: now.toISOString(), action: "auto_progress", actor: actor.id, from: prior, status: s3.status, reason: "Recorded verification milestone" });
     }
     if (s3 && ["prepare_verification", "revise_story", "claim_story", "set_commit", "begin_run", "record_evidence", "record_release", "request_rework", "recover_claim"].includes(action)) s3.last_progress_at = now.toISOString();
-    if (action === "reconcile") p.delivery_control = { ...deliveryControl(p, eligibility, now.getTime()), assessed_at: now.toISOString() };
+    if (action === "reconcile") p.delivery_control = p.workflow.tracking_only === false ? { ...deliveryControl(p, eligibility, now.getTime()), assessed_at: now.toISOString() } : { tracking_only: true, tasks: [], next_task: null };
     const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
     p.audit.push(audit);
     if (s3) {
@@ -4503,6 +4518,36 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     p.eventRecords[event] = { payload, result: JSON.parse(JSON.stringify(s3 === result ? { id: s3.id, version: s3.version, status: s3.status } : result)) };
     return result;
   };
+  if (action === "record_progress") {
+    owner(actor);
+    str.parse(a.worker);
+    const reports = external_exports.array(external_exports.object({ story_id: id, milestone: external_exports.enum(["started", "implemented", "verifying", "verified", "released", "blocked", "rework"]), summary: str, references: external_exports.array(str).default([]), blocker: external_exports.string().optional() })).min(1).max(200).parse(a.reports);
+    req(new Set(reports.map((x) => x.story_id)).size === reports.length, "Duplicate story reports");
+    for (const report of reports) {
+      const s3 = p.stories.find((x) => x.id === report.story_id);
+      req(s3 && !s3.exclusion && !s3.proposal_pending && !s3.source_review, "Story unresolved or excluded");
+      if (s3.claim && Date.parse(s3.claim.expires) > now.getTime()) req(s3.claim.worker === a.worker, "Live claim belongs to another worker");
+    }
+    if (p.workflow.delivery_mode === "approval" && a.approved !== true) {
+      p.progress_proposals ||= [];
+      p.progress_proposals.push({ event_id: event, reports, at: now.toISOString(), worker: a.worker });
+      return save({ pending_approval: true, event_id: event });
+    }
+    for (const report of reports) {
+      const st2 = p.stories.find((x) => x.id === report.story_id);
+      const record = { ...report, revision: st2.revision, at: now.toISOString(), actor: actor.id, worker: a.worker, provenance: "agent_report" };
+      st2.progress_reports ||= [];
+      st2.progress_reports.push(record);
+      st2.status = { started: "Implementing", implemented: "Verifying", verifying: "Verifying", verified: "Ready to ship", released: "Shipped", blocked: "Blocked", rework: "Needs rework" }[report.milestone];
+      st2.blocker = report.blocker || null;
+      st2.last_progress_at = record.at;
+      st2.updated_at = record.at;
+      st2.version++;
+      st2.history.push({ action: "record_progress", ...record });
+    }
+    const queue = p.workflow.delivery_mode === "auto" ? trackingQueue(p) : [];
+    return save({ recorded: reports.map((x) => x.story_id), queue, summary: summary(p) });
+  }
   if (action === "set_delivery_mode") {
     owner(actor);
     const mode = external_exports.enum(["auto", "approval"]).parse(a.mode);
@@ -4741,7 +4786,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       if (s3.claim && commitValue && s3.commit !== commitValue)
         r.conflicts.push({ story: s3.id, reason: "Observed checkout differs from candidate" });
     }
-    r.tracking_health = trackingHealth(p, now.getTime());
+    r.tracking_health = p.workflow.tracking_only === false ? trackingHealth(p, now.getTime()) : progressHealth(p, now.getTime());
     p.reconciliations.push(r);
     return save(r);
   }
@@ -5121,6 +5166,7 @@ var story = { type: "object", properties: { id: s, epic: s, title: s, phase: s, 
 var common = { project_id: s, story_id: s, event_id: s, expected_version: i };
 var lease = { worker: s, attempt_id: s, lease_token: s };
 var specs = {
+  record_progress: { description: "Record delivery agent milestones in one durable update. Kanban never executes checks. Auto applies immediately; Approval stores a proposal unless the user explicitly approved it. References are reports, not independent proof.", fields: { project_id: s, event_id: s, worker: s, approved: bool, reports: array({ type: "object", properties: { story_id: s, milestone: { enum: ["started", "implemented", "verifying", "verified", "released", "blocked", "rework"] }, summary: s, references: array(s), blocker: s }, required: ["story_id", "milestone", "summary"], additionalProperties: false }) }, required: ["project_id", "event_id", "worker", "reports"] },
   approve_proposal: { description: "OWNER: explicitly approve proposed additional scope and map it into required coverage.", fields: { ...common, reason: s }, required: ["project_id", "story_id", "event_id", "reason"] },
   import_source_bundle: { description: "OWNER: atomically import a reviewed full OpenSpec inventory and versioned scenario/task/change mappings; unknown/unverified format denied.", fields: { project_id: s, event_id: s, reason: s, bundle: { type: "object", additionalProperties: true } }, required: ["project_id", "event_id", "reason", "bundle"] },
   add_binding: { description: "OWNER: bind an additional exact repository to the same project; collision-safe.", fields: { project_id: s, event_id: s, binding: s, reason: s }, required: ["project_id", "event_id", "binding", "reason"] },
@@ -5272,11 +5318,12 @@ function publicClaim(claim) {
   return { ...rest, expired: Date.parse(claim.expires) <= Date.now() };
 }
 function eligibleNow(project, story2) {
-  return story2.status === "Ready" && !!project.approval?.phases?.includes(story2.phase) && !story2.proposal_pending && !story2.exclusion && (story2.dependencies || []).every((id2) => project.stories.some((x) => x.id === id2 && x.status === "Shipped" && eligibility(project, x).deployed));
+  return story2.status === "Ready" && !!project.approval?.phases?.includes(story2.phase) && !story2.proposal_pending && !story2.exclusion && (story2.dependencies || []).every((id2) => project.stories.some((x) => x.id === id2 && (project.workflow?.tracking_only !== false ? milestones(x).implemented : x.status === "Shipped" && eligibility(project, x).deployed)));
 }
 function readinessBlockers(project, s3) {
   if (!["Draft", "Backlog"].includes(s3.status)) return [];
   const reasons = [];
+  if (project.workflow?.tracking_only !== false) return s3.dependencies.filter((id2) => !project.stories.some((d) => d.id === id2 && (d.exclusion || milestones(d).implemented))).map((id2) => "Dependency unfinished: " + id2);
   if (!project.approval?.phases.includes(s3.phase)) reasons.push("Phase not selected for delivery");
   if (s3.proposal_pending) reasons.push("Scope proposal unresolved");
   if (s3.source_review) reasons.push("Source changes need assessment");
@@ -5289,6 +5336,8 @@ function card(project, s3) {
   const last = s3.history?.at(-1);
   const openRework = (s3.rework || []).filter((r) => !r.closed_at && !r.resolved_at);
   return {
+    tracking_only: project.workflow?.tracking_only !== false,
+    milestones: milestones(s3),
     id: s3.id,
     title: s3.title,
     epic: s3.epic,
@@ -5339,8 +5388,8 @@ function overview(project, phase) {
     stories: stories.map((s3) => card(project, s3)),
     rejections: (project.rejections || []).slice(-20),
     last_reconciliation: project.reconciliations?.at(-1) || null,
-    tracking_health: trackingHealth({ ...project, stories }),
-    delivery_control: deliveryControl({ ...project, stories }, eligibility)
+    tracking_health: project.workflow?.tracking_only === false ? trackingHealth({ ...project, stories }) : progressHealth({ ...project, stories }),
+    delivery_control: project.workflow?.tracking_only === false ? deliveryControl({ ...project, stories }, eligibility) : { tasks: [], next_task: null, tracking_only: true }
   };
 }
 function storyDetail(project, storyId) {
@@ -5510,11 +5559,10 @@ async function sessionContext(input) {
     return [
       `Cogumi Kanban: this repository is bound to project "${project.name}" (project_id ${project.id}, binding ${binding}).`,
       `Claude session ID for thread_id: ${input.session_id || "unavailable (use a labeled workspace session identifier)"}.`,
-      `Plugin directory (<plugin> in the cogumi-workflow skill): ${pluginRoot}. Scripts: sh "${path3.join(pluginRoot, "bin", "kanban")}" workflow binding|observe|resume|test|release|before-close CONFIG.`,
-      `Outbox for this project: ${pending} pending, ${rejected} rejected event(s)${rejected ? " \u2014 investigate rejected events before claiming work" : ""}.`,
+      `Plugin directory: ${pluginRoot}. Use cli update to reconcile tracking.`,
+      `Outbox: ${pending} pending, ${rejected} rejected reports. Preserve and retry failed deliveries.`,
       `Tracking warnings: ${issues.length}. ${issues.map((x) => x.story_id + ": " + x.message).join(" ")}`,
-      "Before coding: follow the cogumi-workflow skill \u2014 read board_overview, observe/resume, call start_session with the observed commit and the pending and rejected counts, and claim the story before editing code.",
-      "Use the tracked workflow test runner for every proof check; it journals starts/results, renews active claims and queues delivery. Direct tests do not qualify completion. Run cli update at session start, before changing story, after a blocker and before reporting progress. Never hide an unknown outcome or renew an expired claim without reconciliation."
+      "Kanban is tracking-only. Never run tests or launch agents for Kanban. Default Auto requires no tracker approvals; inspect the selected mode. Follow cogumi-workflow and record_progress at implementation, verification, release, blocker and before final response. A commit alone is not completion."
     ].join("\n");
   } finally {
     service.close();

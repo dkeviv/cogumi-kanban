@@ -1,3 +1,4 @@
+import {replayProgress} from './progress-report.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -22,13 +23,14 @@ export async function updateBoard(service: KanbanService, projectId?: string) {
     const matches = projects.filter((p: any) => (p.bindings || [p.binding]).includes(observed.binding) && (!projectId || p.id === projectId));
     if (matches.length !== 1) throw Error('Run update in the bound repository; select --project ID if its binding is ambiguous.');
     const project = matches[0];
+    const progress_delivery=await replayProgress(service,project.id);
     const git = (args: string[]) => { const result = spawnSync('git', args, { cwd: observed.root, encoding: 'utf8' }); if (result.status !== 0) throw Error('Could not observe repository state'); return result.stdout.trim(); };
     const commit = git(['rev-parse', 'HEAD']);
     const dirty = !!git(['status', '--porcelain']);
     const outbox = process.env.COGUMI_OUTBOX || path.join(dataHome(), 'outbox');
     const pending = eventsIn(outbox, project.id), rejected = eventsIn(path.join(outbox, '.rejected'), project.id);
     const board = await service.call('get_board', { project_id: project.id });
-    const missingChecks = board.stories.filter((s: any) => !['Draft', 'Backlog'].includes(s.status)).flatMap((s: any) => [...new Set(s.proof_plan.flatMap((p: any) => (p.checks || []).map((c: any) => c.command)))].flatMap((command: any) => {
+    const missingChecks = (board.workflow?.tracking_only===false?board.stories:[]).filter((s: any) => !['Draft', 'Backlog'].includes(s.status)).flatMap((s: any) => [...new Set(s.proof_plan.flatMap((p: any) => (p.checks || []).map((c: any) => c.command)))].flatMap((command: any) => {
         // Inspect explicit JS/TS check paths, never execute or guess arbitrary shell commands.
         const files = command.split(/\s+/).filter((v: string) => /\.(?:mjs|cjs|js|ts)$/.test(v) && !v.includes('*'));
         return files.filter((file: string) => !fs.existsSync(path.resolve(observed.root, file))).map((file: string) => ({ story_id: s.id, file, code: 'missing_check' }));
@@ -36,7 +38,8 @@ export async function updateBoard(service: KanbanService, projectId?: string) {
     const queue = board.workflow?.delivery_mode==='auto' ? await service.call('advance_queue',{project_id:project.id,event_id:crypto.randomUUID()}) : null;
     const reconciliation = await service.call('reconcile', { project_id: project.id, event_id: crypto.randomUUID(), commit, pending_events: pending });
     const overview = await service.call('board_overview', { project_id: project.id });
-    const report = { project_id: project.id, binding: observed.binding, checked_at: new Date().toISOString(), delivery_mode:board.workflow?.delivery_mode||'auto', queue, checkout: { commit, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview.tracking_health, delivery_control:overview.delivery_control, status_counts: overview.stories.reduce((a: any, s: any) => { a[s.status] = (a[s.status] || 0) + 1; return a; }, {}) };
+    const recent_commits=git(['log','-10','--format=%h %s']);
+    const report = { progress_delivery,recent_commits,completion_inference:'none: review commits and agent reports before recording milestones', project_id: project.id, binding: observed.binding, checked_at: new Date().toISOString(), delivery_mode:board.workflow?.delivery_mode||'auto', queue, checkout: { commit, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview.tracking_health, delivery_control:overview.delivery_control, status_counts: overview.stories.reduce((a: any, s: any) => { a[s.status] = (a[s.status] || 0) + 1; return a; }, {}) };
     const dir = path.join(dataHome(), 'updates'); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const file = path.join(dir, `update-${project.id}.json`), temp = `${file}.${crypto.randomUUID()}.tmp`;
     fs.writeFileSync(temp, JSON.stringify(report, null, 2), { mode: 0o600 }); fs.renameSync(temp, file);

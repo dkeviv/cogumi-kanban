@@ -211,7 +211,7 @@ test('board surfaces tracking gaps separately from lifecycle completion', async 
  try {
   await tick(30);
   assert.match(dom.window.document.getElementById('notice').textContent,/tracking gaps/);
-  assert.match(dom.window.document.getElementById('columns').textContent,/No recorded checks/);
+  assert.match(dom.window.document.getElementById('notice').textContent,/No delivery milestone report/);
   assert.match(dom.window.document.title || template,/Cogumi Kanban/);
  } finally {dom.window.close();service.close();}
 });
@@ -220,6 +220,6 @@ test('board shows completion, epic lanes, readiness blockers and hides source ha
  try{
   const hash='6d6ed39ef3b13cc2d5c1524b580a4413046d78c11f8bca48dd1fdd89e8407db4';const {board,revision}=await service.readBoard();board.projects[0].requirement_source={source:'PRD v1.7',revision:hash};await service.writeBoard(board,revision);
   dom=await load(await renderSnapshot(service,template,p.id));const doc=dom.window.document;
-  assert.match(doc.getElementById('epic-completion-count').textContent,/0 of 1 epics completed/);assert.equal(doc.querySelectorAll('.epic-lane-title').length,1);assert.equal(doc.querySelectorAll('.epic-lane').length,9);assert.match(doc.body.textContent,/Verification plan missing/);assert.ok(!doc.getElementById('coverage').textContent.includes(hash));
+  assert.match(doc.getElementById('epic-completion-count').textContent,/0 of 1 epics implemented/);assert.equal(doc.querySelectorAll('.epic-lane-title').length,1);assert.equal(doc.querySelectorAll('.epic-lane').length,9);assert.ok(!doc.body.textContent.includes('Verification plan missing'));assert.ok(!doc.getElementById('coverage').textContent.includes(hash));
  }finally{dom?.window.close();service.close();}
 });

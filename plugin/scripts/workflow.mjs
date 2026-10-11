@@ -49,6 +49,7 @@ async function main() {
             console.log('Recovered pending results; source and attempt reconciled.');
         }
     } else if (action === 'test') {
+        throw Error('Kanban does not execute tests. Report agent results with record_progress.');
         const child = spawn(process.execPath, [path.join(here, 'test-and-report.mjs'), file], { stdio: 'inherit' });
         process.exitCode = await new Promise(r => child.on('exit', code => r(code ?? 1)));
     } else if (action === 'release') {

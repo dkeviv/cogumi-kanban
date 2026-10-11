@@ -40,11 +40,10 @@ export async function sessionContext(input: { session_id?: string; cwd?: string 
         return [
             `Cogumi Kanban: this repository is bound to project "${project.name}" (project_id ${project.id}, binding ${binding}).`,
             `Claude session ID for thread_id: ${input.session_id || 'unavailable (use a labeled workspace session identifier)'}.`,
-            `Plugin directory (<plugin> in the cogumi-workflow skill): ${pluginRoot}. Scripts: sh "${path.join(pluginRoot, 'bin', 'kanban')}" workflow binding|observe|resume|test|release|before-close CONFIG.`,
-            `Outbox for this project: ${pending} pending, ${rejected} rejected event(s)${rejected ? ' — investigate rejected events before claiming work' : ''}.`,
-            `Tracking warnings: ${issues.length}. ${issues.map((x: any) => x.story_id + ': ' + x.message).join(' ')}`,
-            'Before coding: follow the cogumi-workflow skill — read board_overview, observe/resume, call start_session with the observed commit and the pending and rejected counts, and claim the story before editing code.',
-        'Use the tracked workflow test runner for every proof check; it journals starts/results, renews active claims and queues delivery. Direct tests do not qualify completion. Run cli update at session start, before changing story, after a blocker and before reporting progress. Never hide an unknown outcome or renew an expired claim without reconciliation.',
+            `Plugin directory: ${pluginRoot}. Use cli update to reconcile tracking.`,
+            `Outbox: ${pending} pending, ${rejected} rejected reports. Preserve and retry failed deliveries.`,
+            `Tracking warnings: ${issues.length}. ${issues.map((x:any)=>x.story_id+': '+x.message).join(' ')}`,
+            'Kanban is tracking-only. Never run tests or launch agents for Kanban. Default Auto requires no tracker approvals; inspect the selected mode. Follow cogumi-workflow and record_progress at implementation, verification, release, blocker and before final response. A commit alone is not completion.',
         ].join('\n');
     } finally {
         service.close();

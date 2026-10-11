@@ -19,7 +19,7 @@ function save(file:string,value:any) {const tmp=file+'.'+crypto.randomUUID();fs.
 function alive(pid:number) {try{process.kill(pid,0);return true;}catch{return false;}}
 function xml(s:string) {return s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!));}
 export async function workerCommand(args:string[],pluginRoot:string) {
-    const action=args[0];const service=new KanbanService();
+    const action=args[0];if(['start','run'].includes(action))throw Error('Cogumi Kanban is tracking-only. Delivery execution belongs to your coding agent. Use update or record_progress.');const service=new KanbanService();
     try {
         const observed=observeBinding();const projects=await service.call('list_projects');const matches=projects.filter((p:any)=>(p.bindings||[p.binding]).includes(observed.binding));
         if(matches.length!==1)throw Error('Worker requires exactly one project bound to this repository');

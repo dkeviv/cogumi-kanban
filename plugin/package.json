@@ -1,9 +1,9 @@
 {
   "name": "cogumi-kanban",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "private": true,
   "type": "module",
-  "description": "Cogumi Kanban: local evidence-gated delivery tracking with a live board for Codex and Claude.",
+  "description": "Cogumi Kanban: local implementation, verification and release tracking with a live board for Codex and Claude.",
   "engines": {
     "node": ">=22.13.0"
   },

@@ -1,6 +1,8 @@
 ---
 name: next
-description: Pick the next eligible Cogumi story and, if the user agrees, claim it before coding
+description: Reconcile Cogumi Kanban progress.
 ---
 
-Resolve this installed plugin root from this skill location (two directories above). Read `../../commands/next.md` and execute it. Replace every `${CLAUDE_PLUGIN_ROOT}` example with that resolved absolute root before running it; do not assume Claude environment variables exist. Detect host capabilities from available tools. Read `../cogumi-workflow/SKILL.md` when requested by that command. Use this host's real session identity for worker/thread IDs and the local tracker, preserving the project's approved scope and mode.
+Read the cogumi-workflow skill. Kanban is tracking-only. Auto requires no tracker approvals. Read board_overview. Run cli update in the bound repository. Review actual implementation and record all affected stories with record_progress (stable event ID, worker, milestones, summaries and references). Never infer completion from commits alone or execute product checks on behalf of Kanban. In Approval present proposed reports first; approved:true requires exact user authorization. Open the UI with the open skill when requested.
+
+Resolve the installed plugin root from PLUGIN_ROOT or CLAUDE_PLUGIN_ROOT, otherwise the directory containing this skill; run sh <plugin root>/bin/kanban cli update. Never hardcode a cache version.

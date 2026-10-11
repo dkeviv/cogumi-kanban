@@ -5,14 +5,10 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/cli/main.ts
-import fs5 from "node:fs";
-
-// src/server/worker.ts
-import fs4 from "node:fs";
-import path4 from "node:path";
-import crypto3 from "node:crypto";
-import { spawn, spawnSync as spawnSync3 } from "node:child_process";
+// src/server/progress-report.ts
+import fs2 from "node:fs";
+import path2 from "node:path";
+import crypto2 from "node:crypto";
 
 // src/server/store.ts
 import { DatabaseSync } from "node:sqlite";
@@ -96,10 +92,97 @@ function isTransient(error) {
   return /^Concurrent (update|initialization)/.test(String(e?.message || ""));
 }
 
+// src/engine/checkpoints.ts
+var CREDENTIAL_KEY = /(?:^|[_-])(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret)$|^(?:authorization|cookie|set-cookie|apikey)$/i;
+var B = "(?<![A-Za-z0-9_-])";
+var CREDENTIAL_VALUE = new RegExp([
+  `${B}cgk_[a-f0-9-]{72}`,
+  `\\b(?:Bearer|Basic)\\s+(?=[A-Za-z._~-]*[0-9+/=])[A-Za-z0-9._~+/=-]{12,}`,
+  `${B}sk-[A-Za-z0-9_-]{16,}`,
+  `${B}gh[pousr]_[A-Za-z0-9]{20,}`,
+  `${B}github_pat_[A-Za-z0-9_]{20,}`,
+  `${B}xox[abpr]-[A-Za-z0-9-]{10,}`,
+  `${B}AKIA[0-9A-Z]{16}`,
+  `${B}AIza[0-9A-Za-z_-]{30,}`,
+  `${B}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}`,
+  "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
+].join("|"));
+var IDENTIFIER_KEY = /(?:^|_)ids?$|^(?:binding|bindings|branch|worker|commit|starting_commit|end_commit|lease_token|phase|phases|environment|environments|status|kind|classification|check_ids|dependencies|requirement_ids|version|criterion_revision|result)$/;
+function redactCredentials(text) {
+  return text.replace(new RegExp(CREDENTIAL_VALUE.source, "g"), "[redacted]");
+}
+function redactValues(value, key = "") {
+  if (IDENTIFIER_KEY.test(key)) return value;
+  if (typeof value === "string") return redactCredentials(value);
+  if (Array.isArray(value)) return value.map((v) => redactValues(v, key));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValues(v, k)]));
+  return value;
+}
+function assertNoCredentials(value) {
+  const walk = (v) => {
+    if (typeof v === "string" && CREDENTIAL_VALUE.test(v)) throw Error("Checkpoint cannot contain credentials");
+    if (v && typeof v === "object") for (const [key, item] of Object.entries(v)) {
+      if (CREDENTIAL_KEY.test(key)) throw Error("Checkpoint cannot contain credential fields");
+      walk(item);
+    }
+  };
+  walk(value);
+}
+function assertCredentialFree(value) {
+  assertNoCredentials(value);
+  if (JSON.stringify(value).length > 18e4) throw Error("Checkpoint too large; flush or archive delivered results");
+}
+
+// src/server/progress-report.ts
+var dir = () => path2.join(dataHome(), "progress-outbox");
+async function saveProgress(service, args) {
+  if (!args.event_id || !args.project_id) throw Error("Stable event_id and project_id required");
+  const root = dir();
+  fs2.mkdirSync(root, { recursive: true, mode: 448 });
+  const file = path2.join(root, crypto2.createHash("sha256").update(args.event_id).digest("hex") + ".json");
+  const clean = redactValues(args);
+  const serialized = JSON.stringify(clean);
+  if (fs2.existsSync(file) && fs2.readFileSync(file, "utf8") !== serialized) throw Error("Pending event ID reused with different payload");
+  if (!fs2.existsSync(file)) {
+    const temp = file + "." + crypto2.randomUUID();
+    fs2.writeFileSync(temp, serialized, { mode: 384 });
+    fs2.renameSync(temp, file);
+  }
+  const result = await service.call("record_progress", clean);
+  fs2.unlinkSync(file);
+  return result;
+}
+async function replayProgress(service, projectId) {
+  const results = [];
+  if (!fs2.existsSync(dir())) return results;
+  for (const name of fs2.readdirSync(dir()).filter((x) => x.endsWith(".json"))) {
+    const file = path2.join(dir(), name);
+    try {
+      const args = JSON.parse(fs2.readFileSync(file, "utf8"));
+      if (args.project_id !== projectId) continue;
+      const result = await service.call("record_progress", args);
+      fs2.unlinkSync(file);
+      results.push({ event_id: args.event_id, delivered: true, result });
+    } catch (error) {
+      results.push({ file: name, delivered: false, error: error.message });
+    }
+  }
+  return results;
+}
+
+// src/cli/main.ts
+import fs6 from "node:fs";
+
+// src/server/worker.ts
+import fs5 from "node:fs";
+import path5 from "node:path";
+import crypto4 from "node:crypto";
+import { spawn, spawnSync as spawnSync3 } from "node:child_process";
+
 // src/server/binding.ts
 import { spawnSync } from "node:child_process";
-import fs2 from "node:fs";
-import path2 from "node:path";
+import fs3 from "node:fs";
+import path3 from "node:path";
 function normalizeOrigin(url) {
   let u = url.trim();
   const scp = /^(?:[^@/\s]+@)?([^:/\s]+):\/?(?!\/)(.+)$/.exec(u);
@@ -124,8 +207,41 @@ function observeBinding(cwd = process.cwd()) {
     return { binding: normalizeOrigin(origin.stdout.trim()), root, origin: origin.stdout.trim() };
   const common2 = git(cwd, ["rev-parse", "--git-common-dir"]);
   if (common2.status !== 0) throw Error("Cannot determine Git common directory");
-  const dir = path2.resolve(cwd, common2.stdout.trim());
-  return { binding: `local:${fs2.realpathSync(dir)}`, root, origin: null };
+  const dir2 = path3.resolve(cwd, common2.stdout.trim());
+  return { binding: `local:${fs3.realpathSync(dir2)}`, root, origin: null };
+}
+
+// src/engine/progress.ts
+function milestones(s3) {
+  const reports = (s3.progress_reports || []).filter((x) => x.revision === s3.revision);
+  const latest = reports.at(-1);
+  const rank = { started: 0, implemented: 1, verifying: 1, verified: 2, released: 3, blocked: -1, rework: -1 };
+  const invalidated = latest && (s3.history || []).some((h) => ["request_rework", "classify_rework", "intake_withdrawn"].includes(h.action) && Date.parse(h.at) >= Date.parse(latest.at));
+  const reset = reports.map((x) => x.milestone).lastIndexOf("rework");
+  const value = invalidated ? -1 : Math.max(-1, ...reports.slice(reset + 1).map((x) => rank[x.milestone]));
+  return { implemented: value >= 1, verified: value >= 2, released: value >= 3, reported: !!latest, latest: latest || null };
+}
+function trackingQueue(p) {
+  const moved = [];
+  for (const s3 of p.stories) {
+    if (s3.exclusion || s3.proposal_pending || s3.source_review || !["Draft", "Backlog", "Ready"].includes(s3.status)) continue;
+    if (p.approval && !p.approval.phases.includes(s3.phase)) continue;
+    const ready = s3.criteria.length > 0 && (s3.dependencies || []).every((id2) => p.stories.some((d) => d.id === id2 && (d.exclusion || milestones(d).implemented)));
+    const status = ready ? "Ready" : "Backlog";
+    if (status !== s3.status) {
+      moved.push({ story_id: s3.id, from: s3.status, status });
+      s3.status = status;
+      s3.version++;
+    }
+  }
+  return moved;
+}
+function progressHealth(p, now = Date.now()) {
+  return { issues: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending && ["Implementing", "Verifying", "Ready to ship"].includes(s3.status)).flatMap((s3) => {
+    const m = milestones(s3);
+    const at = m.latest?.at || s3.last_progress_at || s3.updated_at;
+    return !m.reported ? [{ story_id: s3.id, code: "missing_progress", message: "No delivery milestone report recorded; use record_progress." }] : at && now - Date.parse(at) > 30 * 6e4 ? [{ story_id: s3.id, code: "stale_progress", message: "Progress report is stale; reconcile with the delivery agent." }] : [];
+  }), blocking: false };
 }
 
 // src/engine/delivery-control.ts
@@ -697,8 +813,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path6, errorMaps, issueData } = params;
-  const fullPath = [...path6, ...issueData.path || []];
+  const { data, path: path7, errorMaps, issueData } = params;
+  const fullPath = [...path7, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -814,11 +930,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path6, key) {
+  constructor(parent, value, path7, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path6;
+    this._path = path7;
     this._key = key;
   }
   get path() {
@@ -4260,77 +4376,15 @@ var coerce = {
 };
 var NEVER = INVALID;
 
-// src/engine/checkpoints.ts
-var CREDENTIAL_KEY = /(?:^|[_-])(?:token|secret|password|passwd|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret)$|^(?:authorization|cookie|set-cookie|apikey)$/i;
-var B = "(?<![A-Za-z0-9_-])";
-var CREDENTIAL_VALUE = new RegExp([
-  `${B}cgk_[a-f0-9-]{72}`,
-  `\\b(?:Bearer|Basic)\\s+(?=[A-Za-z._~-]*[0-9+/=])[A-Za-z0-9._~+/=-]{12,}`,
-  `${B}sk-[A-Za-z0-9_-]{16,}`,
-  `${B}gh[pousr]_[A-Za-z0-9]{20,}`,
-  `${B}github_pat_[A-Za-z0-9_]{20,}`,
-  `${B}xox[abpr]-[A-Za-z0-9-]{10,}`,
-  `${B}AKIA[0-9A-Z]{16}`,
-  `${B}AIza[0-9A-Za-z_-]{30,}`,
-  `${B}eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}`,
-  "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)"
-].join("|"));
-var IDENTIFIER_KEY = /(?:^|_)ids?$|^(?:binding|bindings|branch|worker|commit|starting_commit|end_commit|lease_token|phase|phases|environment|environments|status|kind|classification|check_ids|dependencies|requirement_ids|version|criterion_revision|result)$/;
-function redactCredentials(text) {
-  return text.replace(new RegExp(CREDENTIAL_VALUE.source, "g"), "[redacted]");
-}
-function redactValues(value, key = "") {
-  if (IDENTIFIER_KEY.test(key)) return value;
-  if (typeof value === "string") return redactCredentials(value);
-  if (Array.isArray(value)) return value.map((v) => redactValues(v, key));
-  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValues(v, k)]));
-  return value;
-}
-function assertNoCredentials(value) {
-  const walk = (v) => {
-    if (typeof v === "string" && CREDENTIAL_VALUE.test(v)) throw Error("Checkpoint cannot contain credentials");
-    if (v && typeof v === "object") for (const [key, item] of Object.entries(v)) {
-      if (CREDENTIAL_KEY.test(key)) throw Error("Checkpoint cannot contain credential fields");
-      walk(item);
-    }
-  };
-  walk(value);
-}
-function assertCredentialFree(value) {
-  assertNoCredentials(value);
-  if (JSON.stringify(value).length > 18e4) throw Error("Checkpoint too large; flush or archive delivered results");
-}
-
 // src/engine/workflow-guide.ts
-var workflowGuide = `You are using Cogumi Kanban, the project delivery workflow for Codex and Claude. All records live in a local SQLite database on this machine. Use one persistent project across sessions. Installing this plugin does not start or keep a worker alive.
-
-INTAKE: For an informal request, extract the user's goal, included/excluded scope, one small story or useful epic groups, and observable acceptance criteria. Use propose_intake to retain the original request, goal, stable story IDs and version. Show the proposal. Respect approval already given in the conversation; decide_intake records the decision without asking again for unchanged authorized work. Ambiguous/additional work remains a proposal outside execution. For existing requirements, use revise_story with the original request and rationale; do not silently add scope. No separate coach or extra LLM service is needed.
-
-SETUP: Observe the repository identity with "sh <plugin>/bin/kanban workflow binding" (normalized git origin URL, or local:<git common directory> when there is no origin; all worktrees share it). Resolve it with resolve_project; ask the user to choose if ambiguous, never guess from a title. create_project only if genuinely new. The binding-to-project mapping lives only in the tracker; write nothing into the product checkout. add_binding explicitly associates additional repositories, not branches/worktrees. Use the Claude session ID (given by the SessionStart hook) as thread_id with associate_thread/start_session; if unavailable, use a clearly labeled stable workspace session identifier. Reporter configuration files are non-secret and live outside product source. Never put credentials in chat, source, config, checkpoints or the tracker.
-
-OWNER TOOLS: Inspect delivery mode first; default Auto. In Auto, make and record owner workflow decisions without asking for separate approval. Preserve the user's explicit constraints and requested outcome. In Approval, obtain explicit authorization for owner decisions, reusing authorization already supplied. Role checks and proof gates apply in both modes. Never take over a live worker or fabricate evidence.
-
-START/RESUME: Read get_board (or board_overview for a compact view) and workflow. Run "sh <plugin>/bin/kanban workflow observe CONFIG" to inspect actual binding, current commit, dirty state, outbox, rejected events and run logs. Recover reports with "resume CONFIG" when an active reporter attempt exists; if a prior run is still active, stop recovery. Unknown prior worker state requires verified interruption. Inspect known provider releases before redeploying. Call start_session with observed binding, commit, session ID and the actual pending and rejected counts from observe; unresolved or rejected reports and conflicts must be investigated. Do not turn a missing signal into success.
-
-PLAN/CLAIM: Register the full source inventory with set_requirements, including unmapped requirements. Preview imports before writing ambiguous changes. Configure strict_checks=true; legacy evidence needs review before requalification. Each criterion needs type, expected outcome, evidence_requirement and reviewed checks: stable check ID, functional/deployed kind, exact command and named observable assertions. Review assertions for actual behavior; successful build/lint or a screenshot is not functionality. Record phases/environments as owner decisions without separate approval in Auto; Approval mode requires authorization; tracker operations do not grant new coding/deployment authority. Ready requires reviewed scope/plans/dependencies. next_story selects eligible priority work. Claim BEFORE coding, with binding, worker, branch/checkout, exact starting commit and acceptance plan. Keep the returned attempt ID and lease token for this session's tool calls only. Continue only within the approved scope.
-
-VERIFY: Record the exact candidate commit with set_commit. Use "sh <plugin>/bin/kanban workflow test CONFIG", which executes the command, registers the run, saves a started checkpoint, heartbeats the lease, records failures/signals/dirty/source drift and queues results in the durable outbox before delivery. check_ids must match the reviewed command and criteria. Actual check code writes [{check_id,name,result}] to the assertion file given in COGUMI_ASSERTION_FILE; never fabricate outcomes from an exit code. Label model/human evaluations separately; their judgments are not deterministic guarantees. Failed/incomplete checks block completion. Outbox replay uses stable event IDs; permanently rejected events are moved aside visibly, the affected run is recorded as blocked, and the cause must be investigated ("kanban report requeue" resends after a fix). Checkpoint files are credential-free. For recovery from loss of the local data directory, configure COGUMI_CHECKPOINT_DIR on separate durable storage. No system can preserve a result that exists only in destroyed local files.
-
-RELEASE: Use the project's actual supported publisher. Wait for terminal provider status. Save its actual provider/deployment_id/version_id/commit_sha/status/observed HTTPS url fields to a JSON file and run "sh <plugin>/bin/kanban workflow release CONFIG PROVIDER_RESULT.json". Never invent URLs or claim provider integration that was not tested. Run prescribed deployed checks targeting that exact version/environment/URL; include the target URL in the command's real assertions. Run "before-close CONFIG", then update_status Shipped with the current lease. Strict projects require a fresh before-close reconciliation. Installing a tracker never authorizes deployment.
-
-REWORK: request_rework retains observed/expected behavior, reproduction and classification. Unmet/regression work reopens with a corrective relation; new scope becomes a separate linked Draft proposal and original completeness stays challenged until the owner resolves classification. For reproducible defects record a failing automated run before fixing, or record_reproduction with honest manual evidence/blocker. New attempt/revision/commit/release proof is required; old passes cannot close it. If the human still reports incompleteness, reopen it even if tests pass. Only the owner resolves or excludes scope.
-
-OPENSPEC: Verify installed format/version first. Git files remain specification authority; use explicit stable requirement/scenario/task/change/path/revision mappings. Reimports preview additions/changes/removals, preserve mapping history and require owner review; checked tasks/archive signals never imply Shipped. Source changes go through the OpenSpec workflow; board writes do not rewrite specifications.
-
-BOARD: In Codex start "sh <plugin>/bin/kanban cli board" as a persistent process and open its actual returned loopback URL with open_in_codex (browser target). It uses the local database and refreshes automatically. The view is read-only; record rework in chat. Never switch to the separately hosted service. In Claude Desktop the board is a Claude Artifact published with /cogumi-kanban:board; it reads this server live and only works in the Claude desktop app on this machine. /cogumi-kanban:snapshot writes a static, clearly labeled snapshot instead.
-
-PROGRESS CAPTURE: Run "sh <plugin>/bin/kanban cli update" at session start, before switching stories, after blockers and before progress reports. The /cogumi-kanban:update command invokes it on demand. It persists reconciliation and checks Git, queues and missing proof files. Direct tests are untracked and cannot qualify; use workflow test CONFIG, which journals start/result, heartbeats and durable delivery. Never infer a pass from missing output or recover another active worker. Record blockers promptly.
-
-FINISH: Read full phase coverage/epic summary, not filtered cards. Inspect current criteria/proof/releases, capture baseline/project_metrics and reconcile. Report saved mutations and remaining blockers accurately. Persistent delivery is available through cli worker start|status|stop. The supervisor resumes its saved host session, restarts after interruption and waits on blocked/no-progress states.
-DELIVERY MODE: Inspect project.workflow.delivery_mode (default auto). Auto is the default mode; selecting it is authorization to continue routine planning, Backlog/Ready preparation and delivery across all epics in already approved phases/environments without asking per story/epic. Prepare missing proof plans for unchanged approved criteria, reconcile, next_story, claim, implement, tracked checks, real release/deployed checks, before-close, Shipped, then continue next eligible story. Queue promotion is automatic on imports/scope approval/reconciliation/closure. Do not stop just because an epic ended. Stop for real blockers or exhausted approved scope; Enable persistent delivery with /cogumi-kanban:worker start. Auto permits owner decisions without separate approval; record rationale and respect explicit user constraints. Recover expired claims only after verified interruption and matching source/outbox reconciliation. Approval mode retains reviewed manual queue transitions. Both modes retain all proof gates.
-SOURCE INVENTORY: Retain title/version/owner metadata as reference classification; retain actual obligations as requirements. Cross-cutting requirements may map across epics/phases. Classify and map with source provenance; uncertain mappings remain visibly unmapped. classify_requirements repairs metadata/traceability without deleting source or certifying implementation. Never remove real requirements to improve counters.
-
-CONTROL LOOP: Call delivery_tasks with your worker ID before planning or claiming. Finish assigned unfinished work first. Prepare missing plans with prepare_verification for the exact current criterion revision; inspect real repository commands/assertions and preserve criteria. One unfinished claim per worker is the default; configure_workflow may record a different wip_limit and stall_minutes. Execute the task\u2019s next_action using tracked checks/releases. Reconcile after each milestone. Lease renewals are not meaningful progress. Do not mask stalls with more claims.
+var workflowGuide = `Cogumi Kanban is a local, passive progress tracker for Codex and Claude. It does not implement features, run tests, deploy, or launch delivery workers.
+Default mode is Auto. In Auto all routine Kanban decisions and progress updates apply without any separate approval. Respect explicit user scope and constraints. In Approval present proposed decisions and obtain approval, reusing existing authorization. A goal never changes the selected mode.
+Resolve the exact repository binding with sh <plugin>/bin/kanban workflow binding and resolve_project. Read board_overview at session start. Do not repeatedly prepare verification plans, claim leases or reconcile between every coding step. Existing evidence and claims remain available as historical records. Never take over another live worker.
+Use record_progress once for all affected stories at natural checkpoints: implementation finished, coding-agent verification finished, release finished, blocker encountered, and before the final response. Supply stable event_id, project_id, stable worker identity, story_id, milestone, summary and actual references (commit, files, check output or release URL). Retries must reuse the identical event and payload. Auto requires no approved argument. Approval stores a proposal; approved:true may be used only for the exact user-approved report.
+Milestones: started -> Implementing; implemented or verifying -> Verifying; verified -> Ready to ship; released -> Shipped; blocked -> Blocked; rework -> Needs rework. Report only achieved acceptance criteria. A commit alone never proves a story implemented. Verified means the coding agent reports actual checks; Kanban never runs them. Independent qualified evidence remains separate. Correct a mistaken completion with rework, preserving history.
+Auto moves unchanged assessed scope to Ready when acceptance criteria exist and dependencies are implemented; otherwise Backlog. Verification plans and deployments do not block development readiness. Source changes or proposed new scope require assessment; Auto records those assessments without approval prompts.
+Epics show separate Implemented, Verified and Released counts. Every required child must reach a milestone and requirement coverage must be mapped before the epic reaches it. Exclusions are never completion. Reports are revision-bound; changed acceptance criteria invalidate current milestones while retaining history.
+Run <plugin>/bin/kanban cli update (or /cogumi-kanban:update-kanban) at session start/resume and before final reporting. It observes repository state and reconciles missing/stale reports without executing tests or blocking coding. Resolve warnings by reviewing real work and recording progress; never infer completion from commits alone. /cogumi-kanban:open opens the local UI, detecting the host. Codex has no native session hook here: explicitly invoke this skill or update command in new sessions. No software can recover unreported work from an arbitrary chat without access to that chat.
 `;
 
 // src/engine/engine.ts
@@ -4479,6 +4533,7 @@ function eligibility(p, s3) {
   return { functional, deployed: !!deployed, reasons };
 }
 function invalidate(p, s3) {
+  if (p.workflow?.tracking_only !== false && milestones(s3).reported) return;
   const e = eligibility(p, s3);
   if (s3.status === "Shipped" && !e.deployed) {
     s3.status = "Needs rework";
@@ -4498,7 +4553,8 @@ function summary(p, phase) {
     const unresolved = reqs.filter((r) => unmapped.includes(r.id));
     const orphan = children.filter((s3) => !reqs.some((r) => r.stories.includes(s3.id)));
     const shipped = children.filter((s3) => s3.status === "Shipped" && eligibility(p, s3).deployed);
-    return { epic, total: children.length, shipped: shipped.length, remaining: children.filter((s3) => !shipped.includes(s3)).map((s3) => ({ id: s3.id, title: s3.title, status: s3.status })), unmapped: unresolved.map((r) => r.id), unmapped_stories: orphan.map((s3) => s3.id), proposals: ss.filter((s3) => s3.epic === epic && s3.proposal_pending).map((s3) => ({ id: s3.id, title: s3.title })), excluded: [...ss.filter((s3) => s3.epic === epic && s3.exclusion).map((s3) => ({ id: s3.id, ...s3.exclusion })), ...reqs.filter((r) => r.exclusion).map((r) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length };
+    const counts = { implemented: children.filter((s3) => milestones(s3).implemented).length, verified: children.filter((s3) => milestones(s3).verified).length, released: children.filter((s3) => milestones(s3).released).length };
+    return { ...counts, implemented_complete: children.length > 0 && counts.implemented === children.length && !unresolved.length && !orphan.length, verified_complete: children.length > 0 && counts.verified === children.length && !unresolved.length && !orphan.length, released_complete: children.length > 0 && counts.released === children.length && !unresolved.length && !orphan.length, epic, total: children.length, shipped: shipped.length, remaining: children.filter((s3) => !shipped.includes(s3)).map((s3) => ({ id: s3.id, title: s3.title, status: s3.status })), unmapped: unresolved.map((r) => r.id), unmapped_stories: orphan.map((s3) => s3.id), proposals: ss.filter((s3) => s3.epic === epic && s3.proposal_pending).map((s3) => ({ id: s3.id, title: s3.title })), excluded: [...ss.filter((s3) => s3.epic === epic && s3.exclusion).map((s3) => ({ id: s3.id, ...s3.exclusion })), ...reqs.filter((r) => r.exclusion).map((r) => ({ id: r.id, ...r.exclusion }))], complete: !!p.requirement_source && reqs.length > 0 && shipped.length === children.length && !unresolved.length && !orphan.length };
   });
   return { epics, unmapped, coverage_registered: !!p.requirement_source };
 }
@@ -4543,12 +4599,12 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     const attempt = actor.role === "reporter" ? actor.attempt_id : a.attempt_id || st2.attempt_id;
     return { ...st2.checkpoints?.find((x) => x.attempt_id === attempt) || { attempt_id: attempt, sequence: 0, events: [], journals: [] }, current_attempt: attempt === st2.attempt_id && !!st2.claim && Date.parse(st2.claim.expires) > now.getTime(), unfinished_runs: st2.runs.filter((r) => r.attempt_id === attempt && !st2.evidence.some((e) => e.run_id === r.id)), completed_run_ids: st2.evidence.filter((e) => e.attempt_id === attempt).map((e) => e.run_id) };
   }
-  if (action === "delivery_tasks") return deliveryControl(p, eligibility, now.getTime(), a.worker);
+  if (action === "delivery_tasks") return p.workflow.tracking_only === false ? deliveryControl(p, eligibility, now.getTime(), a.worker) : { tracking_only: true, tasks: [], next_task: null };
   if (action === "project_metrics") return { stories: p.stories.length, prevented_invalid_transitions: (p.rejections || []).filter((x) => x.action === "update_status").length, rejected_requests: (p.rejections || []).length, duplicate_deliveries: p.duplicate_deliveries || 0, recovery_seconds: p.audit.filter((x) => x.action === "recover_claim").map((x) => x.recovery_seconds).filter((x) => typeof x === "number"), qualifying_criteria: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending).reduce((n, s3) => n + (eligibility(p, s3).functional ? s3.criteria.length : 0), 0), required_criteria: p.stories.filter((s3) => !s3.exclusion && !s3.proposal_pending).reduce((n, s3) => n + s3.criteria.length, 0), verified_releases: p.stories.filter((s3) => eligibility(p, s3).deployed).length, stale_claims: p.stories.filter((s3) => s3.claim && Date.parse(s3.claim.expires) <= now.getTime()).length, open_rework: p.stories.flatMap((s3) => s3.rework).filter((r) => !r.closed_at && !r.resolved_at).length, manual_corrections: p.audit.filter((x) => ["request_rework", "revise_story", "recover_claim"].includes(x.action)).length, recovered_claims: p.audit.filter((x) => x.action === "recover_claim").length, baseline: p.metrics_baseline || null };
   if (action === "get_board")
     return { ...p, metrics: dispatch(board, "project_metrics", { project_id: p.id }, now, actor), summary: summary(p, a.phase), stories: p.stories.map((s3) => ({ ...s3, eligibility: eligibility(p, s3) })) };
   if (action === "next_story")
-    return p.stories.filter((s3) => s3.status === "Ready" && p.approval?.phases.includes(s3.phase) && (!a.phase || s3.phase === a.phase) && !s3.exclusion && s3.dependencies.every((d) => p.stories.some((x) => x.id === d && x.status === "Shipped" && eligibility(p, x).deployed))).sort((x, y) => x.priority - y.priority)[0] || null;
+    return p.stories.filter((s3) => s3.status === "Ready" && (p.workflow.tracking_only !== false || p.approval?.phases.includes(s3.phase)) && (!a.phase || s3.phase === a.phase) && !s3.exclusion && s3.dependencies.every((d) => p.stories.some((x) => x.id === d && (p.workflow.tracking_only !== false ? milestones(x).implemented : x.status === "Shipped" && eligibility(p, x).deployed)))).sort((x, y) => x.priority - y.priority)[0] || null;
   const proposed = () => {
     req(Array.isArray(a.stories) && a.stories.length > 0 && a.stories.length <= 200, "Provide 1 to 200 stories");
     const input = a.stories.map((x) => {
@@ -4581,6 +4637,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
   }
   req(!p.events.includes(event), "Legacy event ID has no replayable payload; reconcile before reusing it");
   const advanceQueue = () => {
+    if (p.workflow.tracking_only !== false) return { moved: trackingQueue(p), backlog: [], ready: [], waiting: [] };
     const backlog = [], ready = [], waiting = [];
     for (const story2 of p.stories) {
       if (!p.approval?.phases.includes(story2.phase) || story2.exclusion || story2.proposal_pending || story2.source_review) continue;
@@ -4609,7 +4666,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       if (prior !== s3.status) s3.history.push({ at: now.toISOString(), action: "auto_progress", actor: actor.id, from: prior, status: s3.status, reason: "Recorded verification milestone" });
     }
     if (s3 && ["prepare_verification", "revise_story", "claim_story", "set_commit", "begin_run", "record_evidence", "record_release", "request_rework", "recover_claim"].includes(action)) s3.last_progress_at = now.toISOString();
-    if (action === "reconcile") p.delivery_control = { ...deliveryControl(p, eligibility, now.getTime()), assessed_at: now.toISOString() };
+    if (action === "reconcile") p.delivery_control = p.workflow.tracking_only === false ? { ...deliveryControl(p, eligibility, now.getTime()), assessed_at: now.toISOString() } : { tracking_only: true, tasks: [], next_task: null };
     const audit = { at: now.toISOString(), action, actor: actor.id, role: actor.role, reason: a.reason, ...data };
     p.audit.push(audit);
     if (s3) {
@@ -4621,6 +4678,36 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
     p.eventRecords[event] = { payload, result: JSON.parse(JSON.stringify(s3 === result ? { id: s3.id, version: s3.version, status: s3.status } : result)) };
     return result;
   };
+  if (action === "record_progress") {
+    owner(actor);
+    str.parse(a.worker);
+    const reports = external_exports.array(external_exports.object({ story_id: id, milestone: external_exports.enum(["started", "implemented", "verifying", "verified", "released", "blocked", "rework"]), summary: str, references: external_exports.array(str).default([]), blocker: external_exports.string().optional() })).min(1).max(200).parse(a.reports);
+    req(new Set(reports.map((x) => x.story_id)).size === reports.length, "Duplicate story reports");
+    for (const report of reports) {
+      const s3 = p.stories.find((x) => x.id === report.story_id);
+      req(s3 && !s3.exclusion && !s3.proposal_pending && !s3.source_review, "Story unresolved or excluded");
+      if (s3.claim && Date.parse(s3.claim.expires) > now.getTime()) req(s3.claim.worker === a.worker, "Live claim belongs to another worker");
+    }
+    if (p.workflow.delivery_mode === "approval" && a.approved !== true) {
+      p.progress_proposals ||= [];
+      p.progress_proposals.push({ event_id: event, reports, at: now.toISOString(), worker: a.worker });
+      return save2({ pending_approval: true, event_id: event });
+    }
+    for (const report of reports) {
+      const st2 = p.stories.find((x) => x.id === report.story_id);
+      const record = { ...report, revision: st2.revision, at: now.toISOString(), actor: actor.id, worker: a.worker, provenance: "agent_report" };
+      st2.progress_reports ||= [];
+      st2.progress_reports.push(record);
+      st2.status = { started: "Implementing", implemented: "Verifying", verifying: "Verifying", verified: "Ready to ship", released: "Shipped", blocked: "Blocked", rework: "Needs rework" }[report.milestone];
+      st2.blocker = report.blocker || null;
+      st2.last_progress_at = record.at;
+      st2.updated_at = record.at;
+      st2.version++;
+      st2.history.push({ action: "record_progress", ...record });
+    }
+    const queue = p.workflow.delivery_mode === "auto" ? trackingQueue(p) : [];
+    return save2({ recorded: reports.map((x) => x.story_id), queue, summary: summary(p) });
+  }
   if (action === "set_delivery_mode") {
     owner(actor);
     const mode = external_exports.enum(["auto", "approval"]).parse(a.mode);
@@ -4859,7 +4946,7 @@ function dispatch(board, action, a, now = /* @__PURE__ */ new Date(), actor) {
       if (s3.claim && commitValue && s3.commit !== commitValue)
         r.conflicts.push({ story: s3.id, reason: "Observed checkout differs from candidate" });
     }
-    r.tracking_health = trackingHealth(p, now.getTime());
+    r.tracking_health = p.workflow.tracking_only === false ? trackingHealth(p, now.getTime()) : progressHealth(p, now.getTime());
     p.reconciliations.push(r);
     return save2(r);
   }
@@ -5239,6 +5326,7 @@ var story = { type: "object", properties: { id: s, epic: s, title: s, phase: s, 
 var common = { project_id: s, story_id: s, event_id: s, expected_version: i };
 var lease = { worker: s, attempt_id: s, lease_token: s };
 var specs = {
+  record_progress: { description: "Record delivery agent milestones in one durable update. Kanban never executes checks. Auto applies immediately; Approval stores a proposal unless the user explicitly approved it. References are reports, not independent proof.", fields: { project_id: s, event_id: s, worker: s, approved: bool, reports: array({ type: "object", properties: { story_id: s, milestone: { enum: ["started", "implemented", "verifying", "verified", "released", "blocked", "rework"] }, summary: s, references: array(s), blocker: s }, required: ["story_id", "milestone", "summary"], additionalProperties: false }) }, required: ["project_id", "event_id", "worker", "reports"] },
   approve_proposal: { description: "OWNER: explicitly approve proposed additional scope and map it into required coverage.", fields: { ...common, reason: s }, required: ["project_id", "story_id", "event_id", "reason"] },
   import_source_bundle: { description: "OWNER: atomically import a reviewed full OpenSpec inventory and versioned scenario/task/change mappings; unknown/unverified format denied.", fields: { project_id: s, event_id: s, reason: s, bundle: { type: "object", additionalProperties: true } }, required: ["project_id", "event_id", "reason", "bundle"] },
   add_binding: { description: "OWNER: bind an additional exact repository to the same project; collision-safe.", fields: { project_id: s, event_id: s, binding: s, reason: s }, required: ["project_id", "event_id", "binding", "reason"] },
@@ -5308,11 +5396,12 @@ function publicClaim(claim) {
   return { ...rest, expired: Date.parse(claim.expires) <= Date.now() };
 }
 function eligibleNow(project, story2) {
-  return story2.status === "Ready" && !!project.approval?.phases?.includes(story2.phase) && !story2.proposal_pending && !story2.exclusion && (story2.dependencies || []).every((id2) => project.stories.some((x) => x.id === id2 && x.status === "Shipped" && eligibility(project, x).deployed));
+  return story2.status === "Ready" && !!project.approval?.phases?.includes(story2.phase) && !story2.proposal_pending && !story2.exclusion && (story2.dependencies || []).every((id2) => project.stories.some((x) => x.id === id2 && (project.workflow?.tracking_only !== false ? milestones(x).implemented : x.status === "Shipped" && eligibility(project, x).deployed)));
 }
 function readinessBlockers(project, s3) {
   if (!["Draft", "Backlog"].includes(s3.status)) return [];
   const reasons = [];
+  if (project.workflow?.tracking_only !== false) return s3.dependencies.filter((id2) => !project.stories.some((d) => d.id === id2 && (d.exclusion || milestones(d).implemented))).map((id2) => "Dependency unfinished: " + id2);
   if (!project.approval?.phases.includes(s3.phase)) reasons.push("Phase not selected for delivery");
   if (s3.proposal_pending) reasons.push("Scope proposal unresolved");
   if (s3.source_review) reasons.push("Source changes need assessment");
@@ -5325,6 +5414,8 @@ function card(project, s3) {
   const last = s3.history?.at(-1);
   const openRework = (s3.rework || []).filter((r) => !r.closed_at && !r.resolved_at);
   return {
+    tracking_only: project.workflow?.tracking_only !== false,
+    milestones: milestones(s3),
     id: s3.id,
     title: s3.title,
     epic: s3.epic,
@@ -5375,8 +5466,8 @@ function overview(project, phase) {
     stories: stories.map((s3) => card(project, s3)),
     rejections: (project.rejections || []).slice(-20),
     last_reconciliation: project.reconciliations?.at(-1) || null,
-    tracking_health: trackingHealth({ ...project, stories }),
-    delivery_control: deliveryControl({ ...project, stories }, eligibility)
+    tracking_health: project.workflow?.tracking_only === false ? trackingHealth({ ...project, stories }) : progressHealth({ ...project, stories }),
+    delivery_control: project.workflow?.tracking_only === false ? deliveryControl({ ...project, stories }, eligibility) : { tasks: [], next_task: null, tracking_only: true }
   };
 }
 function storyDetail(project, storyId) {
@@ -5478,15 +5569,15 @@ var KanbanService = class {
 };
 
 // src/server/update-board.ts
-import fs3 from "node:fs";
-import path3 from "node:path";
-import crypto2 from "node:crypto";
+import fs4 from "node:fs";
+import path4 from "node:path";
+import crypto3 from "node:crypto";
 import { spawnSync as spawnSync2 } from "node:child_process";
-function eventsIn(dir, projectId) {
-  if (!fs3.existsSync(dir)) return 0;
+function eventsIn(dir2, projectId) {
+  if (!fs4.existsSync(dir2)) return 0;
   let count = 0;
-  for (const file of fs3.readdirSync(dir).filter((n) => /^\d+-.+\.json$/.test(n))) {
-    const record = JSON.parse(fs3.readFileSync(path3.join(dir, file), "utf8"));
+  for (const file of fs4.readdirSync(dir2).filter((n) => /^\d+-.+\.json$/.test(n))) {
+    const record = JSON.parse(fs4.readFileSync(path4.join(dir2, file), "utf8"));
     if ((record.event || record).args?.project_id === projectId) count++;
   }
   return count;
@@ -5497,6 +5588,7 @@ async function updateBoard(service, projectId) {
   const matches = projects.filter((p) => (p.bindings || [p.binding]).includes(observed.binding) && (!projectId || p.id === projectId));
   if (matches.length !== 1) throw Error("Run update in the bound repository; select --project ID if its binding is ambiguous.");
   const project = matches[0];
+  const progress_delivery = await replayProgress(service, project.id);
   const git2 = (args) => {
     const result = spawnSync2("git", args, { cwd: observed.root, encoding: "utf8" });
     if (result.status !== 0) throw Error("Could not observe repository state");
@@ -5504,25 +5596,26 @@ async function updateBoard(service, projectId) {
   };
   const commit2 = git2(["rev-parse", "HEAD"]);
   const dirty = !!git2(["status", "--porcelain"]);
-  const outbox = process.env.COGUMI_OUTBOX || path3.join(dataHome(), "outbox");
-  const pending = eventsIn(outbox, project.id), rejected = eventsIn(path3.join(outbox, ".rejected"), project.id);
+  const outbox = process.env.COGUMI_OUTBOX || path4.join(dataHome(), "outbox");
+  const pending = eventsIn(outbox, project.id), rejected = eventsIn(path4.join(outbox, ".rejected"), project.id);
   const board = await service.call("get_board", { project_id: project.id });
-  const missingChecks = board.stories.filter((s3) => !["Draft", "Backlog"].includes(s3.status)).flatMap((s3) => [...new Set(s3.proof_plan.flatMap((p) => (p.checks || []).map((c) => c.command)))].flatMap((command) => {
+  const missingChecks = (board.workflow?.tracking_only === false ? board.stories : []).filter((s3) => !["Draft", "Backlog"].includes(s3.status)).flatMap((s3) => [...new Set(s3.proof_plan.flatMap((p) => (p.checks || []).map((c) => c.command)))].flatMap((command) => {
     const files = command.split(/\s+/).filter((v) => /\.(?:mjs|cjs|js|ts)$/.test(v) && !v.includes("*"));
-    return files.filter((file2) => !fs3.existsSync(path3.resolve(observed.root, file2))).map((file2) => ({ story_id: s3.id, file: file2, code: "missing_check" }));
+    return files.filter((file2) => !fs4.existsSync(path4.resolve(observed.root, file2))).map((file2) => ({ story_id: s3.id, file: file2, code: "missing_check" }));
   }));
-  const queue = board.workflow?.delivery_mode === "auto" ? await service.call("advance_queue", { project_id: project.id, event_id: crypto2.randomUUID() }) : null;
-  const reconciliation = await service.call("reconcile", { project_id: project.id, event_id: crypto2.randomUUID(), commit: commit2, pending_events: pending });
+  const queue = board.workflow?.delivery_mode === "auto" ? await service.call("advance_queue", { project_id: project.id, event_id: crypto3.randomUUID() }) : null;
+  const reconciliation = await service.call("reconcile", { project_id: project.id, event_id: crypto3.randomUUID(), commit: commit2, pending_events: pending });
   const overview2 = await service.call("board_overview", { project_id: project.id });
-  const report = { project_id: project.id, binding: observed.binding, checked_at: (/* @__PURE__ */ new Date()).toISOString(), delivery_mode: board.workflow?.delivery_mode || "auto", queue, checkout: { commit: commit2, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview2.tracking_health, delivery_control: overview2.delivery_control, status_counts: overview2.stories.reduce((a, s3) => {
+  const recent_commits = git2(["log", "-10", "--format=%h %s"]);
+  const report = { progress_delivery, recent_commits, completion_inference: "none: review commits and agent reports before recording milestones", project_id: project.id, binding: observed.binding, checked_at: (/* @__PURE__ */ new Date()).toISOString(), delivery_mode: board.workflow?.delivery_mode || "auto", queue, checkout: { commit: commit2, dirty }, pending_events: pending, rejected_events: rejected, missing_checks: missingChecks, reconciliation_id: reconciliation.id, tracking_health: overview2.tracking_health, delivery_control: overview2.delivery_control, status_counts: overview2.stories.reduce((a, s3) => {
     a[s3.status] = (a[s3.status] || 0) + 1;
     return a;
   }, {}) };
-  const dir = path3.join(dataHome(), "updates");
-  fs3.mkdirSync(dir, { recursive: true, mode: 448 });
-  const file = path3.join(dir, `update-${project.id}.json`), temp = `${file}.${crypto2.randomUUID()}.tmp`;
-  fs3.writeFileSync(temp, JSON.stringify(report, null, 2), { mode: 384 });
-  fs3.renameSync(temp, file);
+  const dir2 = path4.join(dataHome(), "updates");
+  fs4.mkdirSync(dir2, { recursive: true, mode: 448 });
+  const file = path4.join(dir2, `update-${project.id}.json`), temp = `${file}.${crypto3.randomUUID()}.tmp`;
+  fs4.writeFileSync(temp, JSON.stringify(report, null, 2), { mode: 384 });
+  fs4.renameSync(temp, file);
   return { ...report, report_path: file };
 }
 
@@ -5533,12 +5626,12 @@ function workerArgs(host, session) {
   throw Error("Worker host must be codex or claude");
 }
 function workerFingerprint(board) {
-  return crypto3.createHash("sha256").update(JSON.stringify({ mode: board.workflow?.delivery_mode, approval: board.approval, stories: board.stories.map((s3) => ({ id: s3.id, status: s3.status, revision: s3.revision, runs: s3.runs?.length, evidence: s3.evidence?.length, progress: s3.last_progress_at, release: s3.release?.id, commit: s3.commit, claim: s3.claim?.attempt_id, expired: s3.claim ? Date.parse(s3.claim.expires) <= Date.now() : false, source_review: s3.source_review, proposal: s3.proposal_pending, plan: s3.proof_plan, dependencies: s3.dependencies })) })).digest("hex");
+  return crypto4.createHash("sha256").update(JSON.stringify({ mode: board.workflow?.delivery_mode, approval: board.approval, stories: board.stories.map((s3) => ({ id: s3.id, status: s3.status, revision: s3.revision, runs: s3.runs?.length, evidence: s3.evidence?.length, progress: s3.last_progress_at, release: s3.release?.id, commit: s3.commit, claim: s3.claim?.attempt_id, expired: s3.claim ? Date.parse(s3.claim.expires) <= Date.now() : false, source_review: s3.source_review, proposal: s3.proposal_pending, plan: s3.proof_plan, dependencies: s3.dependencies })) })).digest("hex");
 }
 function save(file, value) {
-  const tmp = file + "." + crypto3.randomUUID();
-  fs4.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 384 });
-  fs4.renameSync(tmp, file);
+  const tmp = file + "." + crypto4.randomUUID();
+  fs5.writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 384 });
+  fs5.renameSync(tmp, file);
 }
 function alive(pid) {
   try {
@@ -5553,6 +5646,7 @@ function xml(s3) {
 }
 async function workerCommand(args, pluginRoot2) {
   const action = args[0];
+  if (["start", "run"].includes(action)) throw Error("Cogumi Kanban is tracking-only. Delivery execution belongs to your coding agent. Use update or record_progress.");
   const service = new KanbanService();
   try {
     const observed = observeBinding();
@@ -5560,18 +5654,18 @@ async function workerCommand(args, pluginRoot2) {
     const matches = projects.filter((p) => (p.bindings || [p.binding]).includes(observed.binding));
     if (matches.length !== 1) throw Error("Worker requires exactly one project bound to this repository");
     const project = matches[0];
-    const dir = path4.join(dataHome(), "workers", project.id);
-    fs4.mkdirSync(dir, { recursive: true, mode: 448 });
-    const file = path4.join(dir, "state.json");
-    let state = fs4.existsSync(file) ? JSON.parse(fs4.readFileSync(file, "utf8")) : {};
+    const dir2 = path5.join(dataHome(), "workers", project.id);
+    fs5.mkdirSync(dir2, { recursive: true, mode: 448 });
+    const file = path5.join(dir2, "state.json");
+    let state = fs5.existsSync(file) ? JSON.parse(fs5.readFileSync(file, "utf8")) : {};
     const label = "com.cogumi.kanban." + project.id;
-    const plist = path4.join(process.env.HOME, "Library", "LaunchAgents", label + ".plist");
+    const plist = path5.join(process.env.HOME, "Library", "LaunchAgents", label + ".plist");
     if (action === "status") return { ...state, supervisor_alive: !!state.pid && alive(state.pid), state_path: file };
     if (action === "stop") {
       save(file, { ...state, enabled: false, status: "stopped" });
-      if (process.platform === "darwin" && fs4.existsSync(plist)) {
+      if (process.platform === "darwin" && fs5.existsSync(plist)) {
         spawnSync3("launchctl", ["bootout", `gui/${process.getuid()}`, plist]);
-        fs4.unlinkSync(plist);
+        fs5.unlinkSync(plist);
       }
       if (process.platform === "linux") spawnSync3("systemctl", ["--user", "disable", "--now", "cogumi-kanban-" + project.id + ".service"]);
       return { status: "stopped", state_path: file };
@@ -5587,10 +5681,10 @@ async function workerCommand(args, pluginRoot2) {
       if (state.enabled && state.pid && alive(state.pid)) return { ...state, status: "already-running" };
       state = { ...state, host, executable: command.stdout.trim(), root: observed.root, pluginRoot: pluginRoot2, enabled: true, status: "starting", failures: 0, no_progress_turns: 0, retry_at: 0 };
       save(file, state);
-      const argv = [path4.join(pluginRoot2, "dist/cli.mjs"), "worker", "run"];
+      const argv = [path5.join(pluginRoot2, "dist/cli.mjs"), "worker", "run"];
       if (process.platform === "darwin") {
-        fs4.mkdirSync(path4.dirname(plist), { recursive: true });
-        fs4.writeFileSync(plist, `<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>${xml(label)}</string><key>ProgramArguments</key><array>${[process.execPath, ...argv].map((x) => "<string>" + xml(x) + "</string>").join("")}</array><key>WorkingDirectory</key><string>${xml(observed.root)}</string><key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(process.env.PATH || "")}</string><key>COGUMI_KANBAN_HOME</key><string>${xml(dataHome())}</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>ThrottleInterval</key><integer>30</integer><key>StandardErrorPath</key><string>${xml(path4.join(dir, "supervisor.log"))}</string></dict></plist>`, { mode: 384 });
+        fs5.mkdirSync(path5.dirname(plist), { recursive: true });
+        fs5.writeFileSync(plist, `<?xml version="1.0"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>${xml(label)}</string><key>ProgramArguments</key><array>${[process.execPath, ...argv].map((x) => "<string>" + xml(x) + "</string>").join("")}</array><key>WorkingDirectory</key><string>${xml(observed.root)}</string><key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(process.env.PATH || "")}</string><key>COGUMI_KANBAN_HOME</key><string>${xml(dataHome())}</string></dict><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>ThrottleInterval</key><integer>30</integer><key>StandardErrorPath</key><string>${xml(path5.join(dir2, "supervisor.log"))}</string></dict></plist>`, { mode: 384 });
         spawnSync3("launchctl", ["bootout", `gui/${process.getuid()}`, plist]);
         const loaded = spawnSync3("launchctl", ["bootstrap", `gui/${process.getuid()}`, plist], { encoding: "utf8" });
         if (loaded.status !== 0) {
@@ -5601,10 +5695,10 @@ async function workerCommand(args, pluginRoot2) {
       }
       if (process.platform === "linux") {
         const unit = "cogumi-kanban-" + project.id + ".service";
-        const unitDir = path4.join(process.env.HOME, ".config", "systemd", "user");
-        fs4.mkdirSync(unitDir, { recursive: true });
+        const unitDir = path5.join(process.env.HOME, ".config", "systemd", "user");
+        fs5.mkdirSync(unitDir, { recursive: true });
         const quote = (v) => '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/%/g, "%%") + '"';
-        fs4.writeFileSync(path4.join(unitDir, unit), `[Unit]
+        fs5.writeFileSync(path5.join(unitDir, unit), `[Unit]
 Description=Cogumi Kanban persistent worker
 [Service]
 WorkingDirectory=${quote(observed.root)}
@@ -5624,21 +5718,21 @@ WantedBy=default.target
         }
         return { status: "started", host, restart: "systemd user service", state_path: file };
       }
-      const log = fs4.openSync(path4.join(dir, "supervisor.log"), "a", 384);
+      const log = fs5.openSync(path5.join(dir2, "supervisor.log"), "a", 384);
       const child2 = spawn(process.execPath, argv, { cwd: observed.root, detached: true, stdio: ["ignore", log, log] });
       child2.unref();
-      fs4.closeSync(log);
+      fs5.closeSync(log);
       return { status: "started", host, restart: "worker process only; install an OS service for supervisor/reboot recovery", state_path: file };
     }
     if (action !== "run") throw Error("Usage: worker start [--host codex|claude] | status | stop");
-    const lock = path4.join(dir, "supervisor.lock");
+    const lock = path5.join(dir2, "supervisor.lock");
     try {
-      fs4.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+      fs5.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
     } catch {
-      const pid = Number(fs4.readFileSync(lock, "utf8"));
+      const pid = Number(fs5.readFileSync(lock, "utf8"));
       if (alive(pid)) return { status: "already-running" };
-      fs4.unlinkSync(lock);
-      fs4.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
+      fs5.unlinkSync(lock);
+      fs5.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 384 });
     }
     let child;
     let stopping = false;
@@ -5659,7 +5753,7 @@ WantedBy=default.target
     process.once("SIGINT", stop);
     try {
       while (!stopping) {
-        state = JSON.parse(fs4.readFileSync(file, "utf8"));
+        state = JSON.parse(fs5.readFileSync(file, "utf8"));
         if (!state.enabled) break;
         if (state.child_pid && alive(state.child_pid)) {
           state.status = "waiting-existing-process";
@@ -5684,14 +5778,14 @@ WantedBy=default.target
           continue;
         }
         await updateBoard(service, project.id);
-        const prompt = `Use the Cogumi Kanban workflow skill at ${path4.join(pluginRoot2, "skills/cogumi-workflow/SKILL.md")}. Persistent worker identity: persistent:${project.id}. Project: ${project.id}. Read board and user/source requirements before acting. Execute these current corrective tasks in order: ${JSON.stringify(control.tasks)}. Finish existing claimed work before additional claims. Prepare missing plans using prepare_verification with actual current criteria, commands, assertions and evidence requirements; do not change criteria just to obtain Ready. All qualifying checks must use workflow test and releases must use workflow release. Auto mode authorizes owner decisions without separate approval; preserve explicit user constraints. Resolve plans and authorized phases/environments, implement eligible work across all epics, run tracked checks and real release checks before Shipped. Reconcile prior attempts and reports before resuming; never take over a live worker. Stop at a real blocker and record it. Do not launch another supervisor. Continue until eligible work is exhausted.`;
-        const log = fs4.openSync(path4.join(dir, "worker.jsonl"), "a", 384);
+        const prompt = `Use the Cogumi Kanban workflow skill at ${path5.join(pluginRoot2, "skills/cogumi-workflow/SKILL.md")}. Persistent worker identity: persistent:${project.id}. Project: ${project.id}. Read board and user/source requirements before acting. Execute these current corrective tasks in order: ${JSON.stringify(control.tasks)}. Finish existing claimed work before additional claims. Prepare missing plans using prepare_verification with actual current criteria, commands, assertions and evidence requirements; do not change criteria just to obtain Ready. All qualifying checks must use workflow test and releases must use workflow release. Auto mode authorizes owner decisions without separate approval; preserve explicit user constraints. Resolve plans and authorized phases/environments, implement eligible work across all epics, run tracked checks and real release checks before Shipped. Reconcile prior attempts and reports before resuming; never take over a live worker. Stop at a real blocker and record it. Do not launch another supervisor. Continue until eligible work is exhausted.`;
+        const log = fs5.openSync(path5.join(dir2, "worker.jsonl"), "a", 384);
         child = spawn(state.executable, workerArgs(state.host, state.session), { cwd: observed.root, detached: true, stdio: ["pipe", "pipe", log], env: { ...process.env, COGUMI_PERSISTENT_WORKER: "1" } });
         state = { ...state, pid: process.pid, child_pid: child.pid, status: "running", started_at: (/* @__PURE__ */ new Date()).toISOString() };
         save(file, state);
         let buffer = "";
         child.stdout.on("data", (chunk) => {
-          fs4.writeSync(log, chunk);
+          fs5.writeSync(log, chunk);
           buffer += chunk.toString();
           const lines = buffer.split("\n");
           buffer = lines.pop();
@@ -5701,7 +5795,7 @@ WantedBy=default.target
               const session = e.type === "thread.started" ? e.thread_id : e.type === "system" && e.subtype === "init" ? e.session_id : null;
               if (session) {
                 state.session = session;
-                state.enabled = JSON.parse(fs4.readFileSync(file, "utf8")).enabled;
+                state.enabled = JSON.parse(fs5.readFileSync(file, "utf8")).enabled;
                 save(file, state);
               }
             } catch {
@@ -5713,7 +5807,7 @@ WantedBy=default.target
         child.stdin.end(prompt);
         const monitor = setInterval(async () => {
           try {
-            const current = JSON.parse(fs4.readFileSync(file, "utf8"));
+            const current = JSON.parse(fs5.readFileSync(file, "utf8"));
             const b = await service.call("get_board", { project_id: project.id });
             if (!current.enabled || b.workflow.delivery_mode !== "auto") terminate();
           } catch {
@@ -5725,17 +5819,17 @@ WantedBy=default.target
           child.once("close", (code) => resolve(code));
         });
         clearInterval(monitor);
-        fs4.closeSync(log);
+        fs5.closeSync(log);
         child = null;
         const after = workerFingerprint(await service.call("get_board", { project_id: project.id }));
         state.no_progress_turns = exit === 0 && after === fingerprint ? (state.no_progress_turns || 0) + 1 : 0;
-        const latest = JSON.parse(fs4.readFileSync(file, "utf8"));
+        const latest = JSON.parse(fs5.readFileSync(file, "utf8"));
         state = { ...state, enabled: latest.enabled, child_pid: null, last_exit: exit, failures: exit === 0 ? 0 : (state.failures || 0) + 1, last_fingerprint: fingerprint, retry_at: state.no_progress_turns >= 3 ? Number.MAX_SAFE_INTEGER : Date.now() + (exit === 0 ? 3e5 : Math.min(36e5, 3e4 * 2 ** Math.min(state.failures || 0, 7))), status: exit === 0 ? "reconciling" : "retry-backoff" };
         save(file, state);
       }
     } finally {
-      fs4.unlinkSync(lock);
-      const latest = JSON.parse(fs4.readFileSync(file, "utf8"));
+      fs5.unlinkSync(lock);
+      const latest = JSON.parse(fs5.readFileSync(file, "utf8"));
       save(file, { ...state, enabled: latest.enabled, pid: null, status: "stopped" });
       process.removeListener("SIGTERM", stop);
       process.removeListener("SIGINT", stop);
@@ -5747,7 +5841,7 @@ WantedBy=default.target
 }
 
 // src/cli/main.ts
-import path5 from "node:path";
+import path6 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // src/server/migrate.ts
@@ -5905,7 +5999,7 @@ ${page}
 }
 
 // src/cli/main.ts
-var pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path5.resolve(path5.dirname(fileURLToPath(import.meta.url)), "..");
+var pluginRoot = process.env.PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path6.resolve(path6.dirname(fileURLToPath(import.meta.url)), "..");
 function flag(args, name) {
   const i2 = args.indexOf(name);
   if (i2 < 0) return void 0;
@@ -5918,8 +6012,8 @@ function writeOut(file, text) {
     process.stdout.write(text + "\n");
     return;
   }
-  fs5.writeFileSync(file, text, { mode: 384 });
-  console.error(`Wrote ${path5.resolve(file)}`);
+  fs6.writeFileSync(file, text, { mode: 384 });
+  console.error(`Wrote ${path6.resolve(file)}`);
 }
 async function main(argv) {
   process.umask(63);
@@ -5928,6 +6022,12 @@ async function main(argv) {
   const service = new KanbanService();
   try {
     switch (command) {
+      case "progress": {
+        const file = flag(args, "--file");
+        if (!file) throw Error("Usage: cli progress --file REPORT.json");
+        console.log(JSON.stringify(await saveProgress(service, JSON.parse(fs6.readFileSync(file, "utf8"))), null, 2));
+        return;
+      }
       case "worker":
         console.log(JSON.stringify(await workerCommand(args, pluginRoot), null, 2));
         return;
@@ -5951,7 +6051,7 @@ async function main(argv) {
       case "import": {
         const file = args.find((a) => !a.startsWith("--"));
         if (!file) throw Error("Usage: import FILE [--replace]");
-        const result = await importBoard(service, JSON.parse(fs5.readFileSync(file, "utf8")), { replace: args.includes("--replace") });
+        const result = await importBoard(service, JSON.parse(fs6.readFileSync(file, "utf8")), { replace: args.includes("--replace") });
         console.log(JSON.stringify(result, null, 2));
         return;
       }
@@ -5972,7 +6072,7 @@ async function main(argv) {
         console.log(JSON.stringify(await updateBoard(service, flag(args, "--project")), null, 2));
         return;
       case "board": {
-        const template = fs5.readFileSync(path5.join(pluginRoot, "board", "kanban-board.html"), "utf8");
+        const template = fs6.readFileSync(path6.join(pluginRoot, "board", "kanban-board.html"), "utf8");
         const board = await serveLocalBoard(template, { service });
         console.log(JSON.stringify({ url: board.url, mode: "local-live", read_only: true }));
         const stop = () => board.server.close();
@@ -5982,7 +6082,7 @@ async function main(argv) {
         return;
       }
       case "snapshot": {
-        const template = fs5.readFileSync(path5.join(pluginRoot, "board", "kanban-board.html"), "utf8");
+        const template = fs6.readFileSync(path6.join(pluginRoot, "board", "kanban-board.html"), "utf8");
         let projectId = flag(args, "--project");
         if (!projectId) {
           const projects = await service.call("list_projects");
@@ -5998,8 +6098,8 @@ async function main(argv) {
         }
         const html = await renderSnapshot(service, template, projectId);
         const safeName = projectId.replace(/[^A-Za-z0-9_.-]/g, "_");
-        const out = flag(args, "--out") || path5.join(dataHome(), "snapshots", `board-${safeName}.html`);
-        fs5.mkdirSync(path5.dirname(out), { recursive: true, mode: 448 });
+        const out = flag(args, "--out") || path6.join(dataHome(), "snapshots", `board-${safeName}.html`);
+        fs6.mkdirSync(path6.dirname(out), { recursive: true, mode: 448 });
         writeOut(out, html);
         return;
       }

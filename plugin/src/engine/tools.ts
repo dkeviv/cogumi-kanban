@@ -9,6 +9,7 @@ const specs: Record<string, {
     fields: any;
     required: string[];
 }> = {
+    record_progress:{description:'Record delivery agent milestones in one durable update. Kanban never executes checks. Auto applies immediately; Approval stores a proposal unless the user explicitly approved it. References are reports, not independent proof.',fields:{project_id:s,event_id:s,worker:s,approved:bool,reports:array({type:'object',properties:{story_id:s,milestone:{enum:['started','implemented','verifying','verified','released','blocked','rework']},summary:s,references:array(s),blocker:s},required:['story_id','milestone','summary'],additionalProperties:false})},required:['project_id','event_id','worker','reports']},
     approve_proposal:{description:'OWNER: explicitly approve proposed additional scope and map it into required coverage.',fields:{...common,reason:s},required:['project_id','story_id','event_id','reason']},
     import_source_bundle:{description:'OWNER: atomically import a reviewed full OpenSpec inventory and versioned scenario/task/change mappings; unknown/unverified format denied.',fields:{project_id:s,event_id:s,reason:s,bundle:{type:'object',additionalProperties:true}},required:['project_id','event_id','reason','bundle']},
     add_binding:{description:'OWNER: bind an additional exact repository to the same project; collision-safe.',fields:{project_id:s,event_id:s,binding:s,reason:s},required:['project_id','event_id','binding','reason']},

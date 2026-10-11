@@ -1,4 +1,15 @@
-# Cogumi Kanban — requirements coverage (PRD v3.0)
+# Current tracking-only coverage (v3.1)
+
+| Story | Implementation | Verification |
+|---|---|---|
+| TRK-01 milestone counters | engine/progress.ts, summary, board cards/counters | progress and board-page tests |
+| TRK-02 atomic durable reports | record_progress, service CAS/dedup, progress-report outbox | progress tests and service tests |
+| TRK-03 reconciliation/reminders | update-board, progressHealth, Claude SessionStart, shared skills | progress, update-board, hook-snapshot tests |
+| TRK-04 Auto/Approval tracking only | report proposals, worker/test-runner rejection, workflow instructions | progress, plugin, MCP tests |
+
+Historical proof/worker coverage below is retained as reference. Executor/test-runner requirements are superseded; their suites are archived under plugin/historical-tests and are not current coverage claims. Codex session reminders require explicit invocation; interception of arbitrary unreported chat work remains unsupported.
+
+# Cogumi Kanban — requirements coverage (PRD v3.1)
 
 Each requirement maps to where it is implemented and which tests verify it. Test names are abbreviated; files are under `plugin/tests/`. "Engine" means `plugin/src/engine/engine.ts` (reused from the ChatGPT edition with its original test suites: `engine`, `completeness`, `bug-fixes`, `review-regressions`, `source-coverage`, `source-import`, `board-view`).
 

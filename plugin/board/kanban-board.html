@@ -215,7 +215,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     fillSelect("phase-select", ov.phases, state.phase, "All phases");
     fillSelect("epic-select", ov.epics, state.epic, "All epics");
     const sum = ov.summary || { epics: [], unmapped: [] };
-    $("epic-completion-count").textContent = `${sum.epics.filter(e => e.complete).length} of ${sum.epics.length} epics completed${state.phase ? " in this phase" : " across all phases"}`;
+    $("epic-completion-count").textContent = `${sum.epics.filter(e => e.implemented_complete).length} of ${sum.epics.length} epics implemented · ${sum.epics.filter(e => e.verified_complete).length} verified · ${sum.epics.filter(e => e.released_complete).length} released${state.phase ? " in this phase" : " across all phases"}`;
     const cov = ov.coverage || { unmapped: [], excluded: [] };
     $("coverage").textContent = sum.coverage_registered ? (sum.unmapped.length ? `${sum.unmapped.length} unmapped requirement(s)` : "All requirements mapped") + (cov.references?.length ? ` · ${cov.references.length} reference entries` : "") + (cov.source ? ` · ${cov.source.source}` : "") : "Requirement coverage not registered";
     $("unmapped").replaceChildren(...cov.unmapped.map(r => el("li", {}, el("span", { class: "mono" }, r.id), ` ${r.epic} · ${r.phase}`, r.text ? ` · ${r.text}` : "", r.review_reason ? el("span", { class: "why" }, ` (${r.review_reason})`) : "", "")));
@@ -225,8 +225,8 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
       const pct = e.total ? Math.round(100 * e.shipped / e.total) : 0;
       return el("div", { class: "epic" },
         el("h3", {}, e.epic),
-        el("div", { class: "bar", role: "img", "aria-label": `${e.shipped} of ${e.total} shipped` }, el("span", { style: `width:${pct}%` })),
-        el("div", { class: "meta" }, el("span", {}, `${e.shipped} of ${e.total} shipped`), el("span", { class: e.complete ? "" : "muted" }, e.complete ? "Phase complete" : "Incomplete")),
+        el("div", { class: "bar", role: "img", "aria-label": `${e.implemented||0} of ${e.total} implemented · ${e.verified||0} verified · ${e.released||0} released` }, el("span", { style: `width:${pct}%` })),
+        el("div", { class: "meta" }, el("span", {}, `${e.implemented||0} of ${e.total} implemented · ${e.verified||0} verified · ${e.released||0} released`), el("span", { class: e.complete ? "" : "muted" }, e.implemented_complete ? "Implementation complete" : "Implementation incomplete")),
         el("div", { class: "chips" },
           e.unmapped.length ? el("span", { class: "chip fail" }, `${e.unmapped.length} unmapped`) : null,
           e.unmapped_stories.length ? el("span", { class: "chip blocked" }, `${e.unmapped_stories.length} untraced`) : null,
@@ -256,7 +256,7 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     const cls = ["card", s.status === "Blocked" ? "s-blocked" : "", s.status === "Needs rework" || s.open_rework ? "s-rework" : "", s.status === "Shipped" && s.eligibility.deployed ? "s-ship" : "", s.eligible_next ? "s-next" : ""].join(" ");
     const readiness = s.readiness_blockers || [];
     const task = state.overview.delivery_control?.tasks.find(t => t.story_id === s.id);
-    const proof = s.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof") : s.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof") : null;
+    const proof = s.milestones?.latest ? el("span", {class:"chip pass"}, "Reported: " + s.milestones.latest.milestone) : s.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof") : s.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof") : null;
     return el("button", { class: cls, type: "button", onclick: () => openStory(s.id) },
       el("span", { class: "row" }, el("span", { class: "mono" }, s.id), el("span", { class: "count" }, "P" + s.priority)),
       el("span", { class: "t" }, s.title),
@@ -316,9 +316,10 @@ form.rework { display: grid; gap: 8px; background: var(--surface); border: 1px s
     const evidenceByRun = Object.fromEntries((d.evidence || []).map(e => [e.run_id, e]));
     const parts = [
       sheetHeader(d.id, d.title),
+      d.tracking_only ? el("div", {class:"notice"}, el("strong", {}, "Delivery progress (agent-reported)"), el("span", {}, d.milestones?.latest ? `${d.milestones.latest.milestone}: ${d.milestones.latest.summary}` : "No milestone report recorded"), el("span", {}, (d.milestones?.latest?.references||[]).join(" · "))) : null,
       flash ? el("div", { class: "notice", role: "status" }, el("strong", {}, flash)) : null,
-      el("div", { class: "chips" }, el("span", { class: "chip" }, d.status), el("span", { class: "chip" }, d.epic), el("span", { class: "chip" }, d.phase), d.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof qualifies") : el("span", { class: "chip fail" }, "Functional proof missing"), d.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof qualifies") : el("span", { class: "chip fail" }, "Deployed proof missing")),
-      d.eligibility.reasons.length ? el("div", { class: "notice warn" }, el("strong", {}, "Why this is not complete"), el("span", {}, d.eligibility.reasons.join(" · "))) : null,
+      el("div", { class: "chips" }, el("span", { class: "chip" }, d.status), el("span", { class: "chip" }, d.epic), el("span", { class: "chip" }, d.phase), d.eligibility.functional ? el("span", { class: "chip pass" }, "Functional proof qualifies") : el("span", { class: "chip fail" }, "Independent functional proof not recorded"), d.eligibility.deployed ? el("span", { class: "chip pass" }, "Deployed proof qualifies") : el("span", { class: "chip fail" }, "Independent deployed proof not recorded")),
+      !d.tracking_only && d.eligibility.reasons.length ? el("div", { class: "notice warn" }, el("strong", {}, "Why this is not complete"), el("span", {}, d.eligibility.reasons.join(" · "))) : null,
       el("dl", { class: "kv" },
         el("dt", {}, "Candidate commit"), el("dd", { class: "mono" }, d.commit || "—"),
         el("dt", {}, "Attempt"), el("dd", { class: "mono" }, d.attempt_id || "—"),

@@ -1,0 +1,1 @@
+Historical v2.6 executor tests retained as reference. Executor/test-runner features were removed in v2.7. These are not part of the active test suite. Retained evidence APIs remain covered by engine/reporter tests.

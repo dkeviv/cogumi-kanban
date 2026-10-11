@@ -1,3 +1,4 @@
+import {saveProgress} from '../server/progress-report.ts';
 // cogumi-kanban command line (bundled to dist/cli.mjs).
 //   doctor                       environment and database health
 //   binding                      print this checkout's repository binding
@@ -39,6 +40,10 @@ async function main(argv: string[]) {
     const service = new KanbanService();
     try {
         switch (command) {
+            case 'progress': {
+                const file=flag(args,'--file');if(!file)throw Error('Usage: cli progress --file REPORT.json');
+                console.log(JSON.stringify(await saveProgress(service,JSON.parse(fs.readFileSync(file,'utf8'))),null,2));return;
+            }
             case 'worker':
                 console.log(JSON.stringify(await workerCommand(args,pluginRoot),null,2));return;
             case 'doctor': {

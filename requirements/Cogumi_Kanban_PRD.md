@@ -1,3 +1,25 @@
+# Cogumi Kanban PRD v3.1
+
+This tracking-only contract supersedes conflicting execution and proof-gate requirements below. Kanban tracks that all required epics are implemented; the coding agent owns implementation, tests and deployment. No persistent delivery executor or tracker-run product tests are permitted.
+
+## Epic 17: Clear completion (TRK-01)
+As a user I see separate Implemented, Verified and Released story and epic milestones immediately. Epic milestones require all required children and mapped coverage. A commit alone cannot establish completion. Reports are revision-bound, preserved on changes and visibly labelled agent-reported, separate from independent qualified proof.
+
+## Epic 18: One durable update (TRK-02)
+As a delivery agent I batch affected stories into one record_progress call with a stable retry event ID, worker, milestone, summary and references. Duplicate retries do not duplicate reports; invalid batches change nothing. Rework withdraws current reported milestones. Unchanged assessed scope progresses through Backlog/Ready based on acceptance criteria and implemented dependencies, without proof-plan or deployment gates.
+
+## Epic 19: Nonblocking reconciliation (TRK-03)
+As a user I invoke update-kanban to inspect repository/outbox state and missing or stale milestone reports. Warnings never block development and never invent completion. Natural checkpoint reminders cover implementation, agent verification, release, blockers and final responses. Claude receives session reminders; Codex explicitly invokes the workflow skill or update command because no session hook is available. Unreported arbitrary chat work cannot be guaranteed recoverable.
+
+## Epic 20: Mode and responsibility (TRK-04)
+Auto is default and requires no Kanban approval for routine tracking decisions. Approval stores progress proposals until the exact report is approved; existing user approval is reused. Setting a goal does not select mode. Explicit scope constraints and live-worker ownership persist. Kanban never launches delivery workers or executes product tests. Legacy worker status/stop remain available for safe cleanup; start/run are disabled. Old proof records and local data are preserved.
+
+## Acceptance
+Verify atomic reports, retries, revision invalidation, rework, separate counters, dependency readiness, approval proposals, live ownership, credential redaction, and disabled executor. Publish host-neutral package, readme and synchronized source/distribution with the remote repository.
+
+---
+Historical specification follows for context; conflicting execution requirements are superseded above.
+
 # Cogumi Kanban — Product Requirements
 
 Version 3.0 | October 10, 2026 | Owner Vivek | Host-neutral local delivery for Codex and Claude

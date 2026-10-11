@@ -1,3 +1,4 @@
+import { milestones, progressHealth } from '../engine/progress.ts';
 // Compact, credential-free read models for the board Artifact and for Claude's context.
 // get_board returns every evidence output and lease token; these views do not.
 import { deliveryControl } from '../engine/delivery-control.ts';
@@ -15,12 +16,13 @@ function publicClaim(claim: any) {
 
 export function eligibleNow(project: any, story: any) {
     return story.status === 'Ready' && !!project.approval?.phases?.includes(story.phase) && !story.proposal_pending && !story.exclusion
-        && (story.dependencies || []).every((id: string) => project.stories.some((x: any) => x.id === id && x.status === 'Shipped' && eligibility(project, x).deployed));
+        && (story.dependencies || []).every((id: string) => project.stories.some((x: any) => x.id === id && (project.workflow?.tracking_only!==false?milestones(x).implemented:x.status === 'Shipped' && eligibility(project, x).deployed)));
 }
 
 export function readinessBlockers(project:any,s:any) {
     if(!['Draft','Backlog'].includes(s.status))return [];
     const reasons:string[]=[];
+    if(project.workflow?.tracking_only!==false)return s.dependencies.filter((id:string)=>!project.stories.some((d:any)=>d.id===id&&(d.exclusion||milestones(d).implemented))).map((id:string)=>'Dependency unfinished: '+id);
     if(!project.approval?.phases.includes(s.phase))reasons.push('Phase not selected for delivery');
     if(s.proposal_pending)reasons.push('Scope proposal unresolved');
     if(s.source_review)reasons.push('Source changes need assessment');
@@ -34,7 +36,7 @@ function card(project: any, s: any) {
     // The engine closes reports with closed_at / resolved_at timestamps.
     const openRework = (s.rework || []).filter((r: any) => !r.closed_at && !r.resolved_at);
     return {
-        id: s.id, title: s.title, epic: s.epic, phase: s.phase, priority: s.priority, status: s.status,
+        tracking_only:project.workflow?.tracking_only!==false, milestones:milestones(s), id: s.id, title: s.title, epic: s.epic, phase: s.phase, priority: s.priority, status: s.status,
         blocker: s.blocker || s.blocked?.reason || null,
         dependencies: s.dependencies || [],
         readiness_blockers: readinessBlockers(project,s),
@@ -84,8 +86,8 @@ function overview(project: any, phase?: string) {
         stories: stories.map((s: any) => card(project, s)),
         rejections: (project.rejections || []).slice(-20),
         last_reconciliation: project.reconciliations?.at(-1) || null,
-        tracking_health: trackingHealth({ ...project, stories }),
-        delivery_control:deliveryControl({...project,stories},eligibility),
+        tracking_health: project.workflow?.tracking_only===false?trackingHealth({ ...project, stories }):progressHealth({...project,stories}),
+        delivery_control:project.workflow?.tracking_only===false?deliveryControl({...project,stories},eligibility):{tasks:[],next_task:null,tracking_only:true},
     };
 }
 

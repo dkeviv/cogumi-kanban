@@ -1,5 +1,5 @@
 ---
-description: Pick the next eligible Cogumi story and, if the user agrees, claim it before coding
+description: Reconcile Cogumi Kanban progress.
 ---
 
-Use the kanban MCP tools. Call `next_story` for the bound project (resolve it first if needed). For a strict project, make sure a `start_session` from the last 15 minutes exists for the current HEAD with a verified `pending_events` count, and call it again if not. Show the story's criteria, proof plan and dependencies. If the user wants to start it (or already said so: $ARGUMENTS), claim it with `claim_story` using the observed binding, the current host and session ID as worker, the current branch, the exact `git rev-parse HEAD` and a short acceptance plan, then write the reporter config described in the cogumi-workflow skill outside the product checkout.
+Read the cogumi-workflow skill. Kanban is tracking-only. Auto requires no tracker approvals. Read board_overview. Run cli update in the bound repository. Review actual implementation and record all affected stories with record_progress (stable event ID, worker, milestones, summaries and references). Never infer completion from commits alone or execute product checks on behalf of Kanban. In Approval present proposed reports first; approved:true requires exact user authorization. Open the UI with the open skill when requested.
