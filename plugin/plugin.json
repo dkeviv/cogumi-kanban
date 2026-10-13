@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "cogumi-kanban",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "description": "Cogumi Kanban: local implementation, verification and release tracking with a live board for Codex and Claude.",
   "author": {
     "name": "Vivek"

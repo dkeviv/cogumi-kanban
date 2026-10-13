@@ -3,7 +3,7 @@ import { guide } from '../engine/engine.ts';
 import { KanbanService, tools, toolNames } from './service.ts';
 
 export const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
-export const SERVER_INFO = { name: 'cogumi-kanban', version: '2.7.0' };
+export const SERVER_INFO = { name: 'cogumi-kanban', version: '2.7.1' };
 export const MAX_MESSAGE = 4_000_000;
 
 export function instructions(pluginRoot: string) {

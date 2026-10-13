@@ -5491,7 +5491,7 @@ var KanbanService = class {
 
 // src/server/mcp.ts
 var SUPPORTED_PROTOCOLS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
-var SERVER_INFO = { name: "cogumi-kanban", version: "2.7.0" };
+var SERVER_INFO = { name: "cogumi-kanban", version: "2.7.1" };
 var MAX_MESSAGE = 4e6;
 function instructions(pluginRoot2) {
   return workflowGuide.replaceAll("<plugin>", pluginRoot2);

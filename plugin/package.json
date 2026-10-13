@@ -1,6 +1,6 @@
 {
   "name": "cogumi-kanban",
-  "version": "2.7.0",
+  "version": "2.7.1",
   "private": true,
   "type": "module",
   "description": "Cogumi Kanban: local implementation, verification and release tracking with a live board for Codex and Claude.",

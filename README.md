@@ -15,6 +15,10 @@ Legacy worker start/run are disabled; status/stop remain for cleanup. Existing l
 
 Local delivery tracking for Codex and Claude. One shared SQLite tracker records story claims, actual check results, releases, rework and requirement coverage. A live Kanban UI shows the same records on your machine. MIT licensed.
 
+## One plugin, including setup
+
+Install only `cogumi-kanban@cogumi`. Setup and reconnection are included: invoke `/cogumi-kanban:setup-cogumi` or ask “Set up Cogumi Kanban”. Start also performs setup before reconciliation. It preserves existing local projects and never seeds demo data. The obsolete `cogumi-kanban-setup` cloud plugin is not required.
+
 ## Requirements
 
 - Node.js **22.13 or newer**, available on PATH. If necessary, set `COGUMI_NODE` to an absolute Node executable path.

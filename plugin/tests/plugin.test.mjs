@@ -86,3 +86,13 @@ test('each host command has a native skill entry point without depending on comm
   const skill=await read(`skills/${name}/SKILL.md`);assert.match(skill,new RegExp(`name: ${name}\\n`));assert.match(skill,/resolved.*root|installed.*root|plugin root/i);
  }
 });
+
+ test('setup ships in the single tracker package and start invokes it', async () => {
+ const marketplace=await json('../.claude-plugin/marketplace.json');
+ assert.equal(marketplace.plugins.length,1);
+ assert.equal(marketplace.plugins[0].name,'cogumi-kanban');
+ const setup=await read('skills/setup-cogumi/SKILL.md');
+ assert.match(setup,/cli doctor/);assert.match(setup,/resolve_project/);assert.match(setup,/create_project/);
+ assert.match(setup,/Do not seed sample stories/);
+ assert.match(await read('skills/start/SKILL.md'),/setup-cogumi skill/);
+ });
